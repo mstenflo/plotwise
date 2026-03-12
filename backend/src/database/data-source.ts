@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { DataSource } from 'typeorm';
 import { PlannerProjectEntity } from '../planner/entities/planner-project.entity';
+import { SeedCatalogEntity } from '../planner/entities/seed-catalog.entity';
 
 const dbPort = Number(process.env.DB_PORT ?? '5432');
 const dbSsl = process.env.DB_SSL === 'true';
@@ -29,7 +30,7 @@ export default new DataSource({
   password: hasDatabaseUrl ? undefined : (process.env.DB_PASSWORD ?? 'postgres'),
   database: hasDatabaseUrl ? undefined : (process.env.DB_NAME ?? 'plotwise'),
   ssl: resolveSslConfig(),
-  entities: [PlannerProjectEntity],
+  entities: [PlannerProjectEntity, SeedCatalogEntity],
   migrations: ['src/database/migrations/*{.ts,.js}'],
   synchronize: false,
 });

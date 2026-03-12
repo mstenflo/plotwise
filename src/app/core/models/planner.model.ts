@@ -55,6 +55,7 @@ export interface PlannerTask {
   dueDateIso: string;
   bedId: string;
   priority: WarningSeverity;
+  completed: boolean;
 }
 
 export interface PlannerWarning {
@@ -74,6 +75,8 @@ export interface GardenProject {
   firstFrostDateIso: string;
   seeds: SeedMetadata[];
   objects: LayoutObject[];
+  completedTaskIds?: string[];
+  archivedAtIso?: string;
   updatedAtIso: string;
 }
 

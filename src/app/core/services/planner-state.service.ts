@@ -47,6 +47,8 @@ export class PlannerStateService {
 
   readonly tasks = computed<PlannerTask[]>(() => {
     const items: PlannerTask[] = [];
+    const completedTaskIds = new Set(this.activeProject().completedTaskIds ?? []);
+
     for (const bed of this.beds()) {
       if (!bed.planting) {
         items.push({
@@ -54,7 +56,8 @@ export class PlannerStateService {
           title: `Plan planting for ${bed.name}`,
           dueDateIso: new Date().toISOString(),
           bedId: bed.id,
-          priority: 'info'
+          priority: 'info',
+          completed: completedTaskIds.has(`task-plan-${bed.id}`)
         });
         continue;
       }
@@ -64,7 +67,8 @@ export class PlannerStateService {
         title: `Harvest ${bed.name}`,
         dueDateIso: bed.planting.expectedHarvestDateIso,
         bedId: bed.id,
-        priority: 'warning'
+        priority: 'warning',
+        completed: completedTaskIds.has(`task-harvest-${bed.id}`)
       });
 
       const seed = this.seeds().find((entry) => entry.id === bed.planting?.seedId);
@@ -76,7 +80,8 @@ export class PlannerStateService {
           title: `Succession sowing for ${seed.name}`,
           dueDateIso: successionDate.toISOString(),
           bedId: bed.id,
-          priority: 'info'
+          priority: 'info',
+          completed: completedTaskIds.has(`task-succession-${bed.id}`)
         });
       }
     }
@@ -139,6 +144,8 @@ export class PlannerStateService {
       }
     }
 
+    result.push(...this.computeCompanionWarnings());
+
     if (result.length === 0) {
       result.push({
         id: 'healthy-plan',
@@ -186,8 +193,64 @@ export class PlannerStateService {
     this.selectedSeedId.set(seedId);
   }
 
+  setActiveProject(projectId: string): void {
+    const exists = this.projects().some((project) => project.id === projectId);
+    if (!exists) {
+      return;
+    }
+
+    this.activeProjectId.set(projectId);
+    this.selectedObjectId.set(null);
+  }
+
+  archiveActiveProject(): void {
+    const active = this.activeProject();
+    if (!active || active.archivedAtIso) {
+      return;
+    }
+
+    this.patchProject((project) => ({
+      ...project,
+      archivedAtIso: new Date().toISOString()
+    }));
+
+    this.ensureActiveProjectVisible();
+  }
+
+  unarchiveProject(projectId: string): void {
+    const exists = this.projects().some((project) => project.id === projectId && !!project.archivedAtIso);
+    if (!exists) {
+      return;
+    }
+
+    const updated = this.projects().map((project) =>
+      project.id === projectId
+        ? { ...project, archivedAtIso: undefined, updatedAtIso: new Date().toISOString() }
+        : project
+    );
+
+    this.projects.set(updated);
+    this.persistProjectsToStorage();
+  }
+
   setSeason(season: ProjectSeason): void {
     this.patchProject((project) => ({ ...project, season }));
+  }
+
+  toggleTaskCompletion(taskId: string, completed: boolean): void {
+    this.patchProject((project) => {
+      const completedTaskIds = new Set(project.completedTaskIds ?? []);
+      if (completed) {
+        completedTaskIds.add(taskId);
+      } else {
+        completedTaskIds.delete(taskId);
+      }
+
+      return {
+        ...project,
+        completedTaskIds: [...completedTaskIds]
+      };
+    });
   }
 
   assignSelectedSeedToSelectedBed(): void {
@@ -221,6 +284,67 @@ export class PlannerStateService {
     });
   }
 
+  clearSelectedBedPlanting(): void {
+    const bed = this.selectedBed();
+    if (!bed || !bed.planting) {
+      return;
+    }
+
+    this.patchObject(bed.id, (object) => {
+      if (object.type !== 'bed') {
+        return object;
+      }
+
+      const { planting, ...rest } = object;
+      return rest;
+    });
+
+    this.clearTaskCompletionForBed(bed.id);
+  }
+
+  duplicateSelectedBed(): void {
+    const bed = this.selectedBed();
+    if (!bed) {
+      return;
+    }
+
+    const duplicate: BedLayout = {
+      ...bed,
+      id: `bed-${crypto.randomUUID().slice(0, 8)}`,
+      name: `${bed.name} Copy`,
+      xInches: bed.xInches + 16,
+      yInches: bed.yInches + 16,
+      planting: bed.planting ? { ...bed.planting } : undefined
+    };
+
+    this.patchProject((project) => ({
+      ...project,
+      objects: [...project.objects, duplicate]
+    }));
+
+    this.selectedObjectId.set(duplicate.id);
+  }
+
+  deleteSelectedObject(): void {
+    const selectedId = this.selectedObjectId();
+    if (!selectedId) {
+      return;
+    }
+
+    const selectedBed = this.selectedBed();
+
+    this.patchProject((project) => ({
+      ...project,
+      objects: project.objects.filter((item) => item.id !== selectedId)
+    }));
+
+    if (selectedBed) {
+      this.clearTaskCompletionForBed(selectedBed.id);
+    }
+
+    this.selectedObjectId.set(null);
+  }
+
   updateBedGeometry(update: BedGeometryUpdate): void {
     this.patchObject(update.bedId, (object) => {
       if (object.type !== 'bed') {
@@ -247,6 +371,15 @@ export class PlannerStateService {
     this.patchObject(selectedId, (object) => ({ ...object, name: name.trim() || object.name }));
   }
 
+  renameObject(objectId: string, name: string): void {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    this.patchObject(objectId, (object) => ({ ...object, name: trimmed }));
+  }
+
   saveProjects(): void {
     const project = this.activeProject();
     if (!project) {
@@ -256,11 +389,90 @@ export class PlannerStateService {
     this.plannerApi.saveProject(project).subscribe({
       next: (savedProject) => {
         this.patchProject(() => savedProject);
-        this.storage?.setItem(STORAGE_KEY, JSON.stringify(this.projects()));
+        this.persistProjectsToStorage();
       },
       error: () => {
-        this.storage?.setItem(STORAGE_KEY, JSON.stringify(this.projects()));
+        this.persistProjectsToStorage();
       }
+    });
+  }
+
+  createProject(): void {
+    const active = this.activeProject();
+    const count = this.projects().length + 1;
+    const payload = {
+      name: `Garden ${count}`,
+      season: active.season,
+      climateZone: active.climateZone,
+      lastFrostDateIso: active.lastFrostDateIso,
+      firstFrostDateIso: active.firstFrostDateIso
+    };
+
+    this.plannerApi.createProject(payload).subscribe({
+      next: (createdProject) => {
+        this.projects.set([createdProject, ...this.projects()]);
+        this.activeProjectId.set(createdProject.id);
+        this.selectedObjectId.set(null);
+        this.selectedSeedId.set(null);
+        this.persistProjectsToStorage();
+      },
+      error: () => {
+        const localProject = this.createStarterProject();
+        localProject.id = `project-${crypto.randomUUID().slice(0, 8)}`;
+        localProject.name = payload.name;
+        localProject.season = payload.season;
+        localProject.climateZone = payload.climateZone;
+        localProject.lastFrostDateIso = payload.lastFrostDateIso;
+        localProject.firstFrostDateIso = payload.firstFrostDateIso;
+        localProject.objects = [];
+        localProject.seeds = active.seeds.map((seed) => ({ ...seed }));
+
+        this.projects.set([localProject, ...this.projects()]);
+        this.activeProjectId.set(localProject.id);
+        this.selectedObjectId.set(null);
+        this.selectedSeedId.set(null);
+        this.persistProjectsToStorage();
+      }
+    });
+  }
+
+  duplicateActiveProject(): void {
+    const source = this.activeProject();
+    const duplicate: GardenProject = {
+      ...source,
+      id: `project-${crypto.randomUUID().slice(0, 8)}`,
+      name: `${source.name} Copy`,
+      seeds: structuredClone(source.seeds),
+      objects: structuredClone(source.objects)
+    };
+
+    this.plannerApi.saveProject(duplicate).subscribe({
+      next: (savedProject) => {
+        this.projects.set([savedProject, ...this.projects()]);
+        this.activeProjectId.set(savedProject.id);
+        this.selectedObjectId.set(null);
+        this.persistProjectsToStorage();
+      },
+      error: () => {
+        this.projects.set([duplicate, ...this.projects()]);
+        this.activeProjectId.set(duplicate.id);
+        this.selectedObjectId.set(null);
+        this.persistProjectsToStorage();
+      }
+    });
+  }
+
+  deleteActiveProject(): void {
+    const active = this.activeProject();
+    const allProjects = this.projects();
+
+    if (!active || allProjects.length <= 1) {
+      return;
+    }
+
+    this.plannerApi.deleteProject(active.id).subscribe({
+      next: () => this.removeProjectFromState(active.id),
+      error: () => this.removeProjectFromState(active.id)
     });
   }
 
@@ -274,7 +486,7 @@ export class PlannerStateService {
         this.projects.set(loaded);
         this.activeProjectId.set(loaded[0].id);
         this.selectedObjectId.set(null);
-        this.storage?.setItem(STORAGE_KEY, JSON.stringify(loaded));
+        this.persistProjectsToStorage();
       },
       error: () => {
         const loaded = this.loadProjects();
@@ -310,6 +522,93 @@ export class PlannerStateService {
     return usedArea / bedArea;
   }
 
+  private computeCompanionWarnings(): PlannerWarning[] {
+    const warnings: PlannerWarning[] = [];
+    const plantedBeds = this.beds().filter((bed) => !!bed.planting);
+
+    for (let i = 0; i < plantedBeds.length; i++) {
+      for (let j = i + 1; j < plantedBeds.length; j++) {
+        const a = plantedBeds[i];
+        const b = plantedBeds[j];
+
+        const seedA = this.seeds().find((seed) => seed.id === a.planting?.seedId);
+        const seedB = this.seeds().find((seed) => seed.id === b.planting?.seedId);
+        if (!seedA || !seedB) {
+          continue;
+        }
+
+        const distance = this.getBedCenterDistanceInches(a, b);
+        if (distance > 220) {
+          continue;
+        }
+
+        const conflictPair =
+          seedA.conflictSeedIds?.includes(seedB.id) || seedB.conflictSeedIds?.includes(seedA.id);
+        if (conflictPair) {
+          warnings.push({
+            id: `companion-conflict-${a.id}-${b.id}`,
+            title: `${a.name} and ${b.name}: incompatible pairing`,
+            detail: `${seedA.name} and ${seedB.name} are not recommended close together (${Math.round(distance)}in apart).`,
+            severity: 'warning',
+            bedId: a.id
+          });
+          continue;
+        }
+
+        const companionPair =
+          seedA.companionSeedIds?.includes(seedB.id) || seedB.companionSeedIds?.includes(seedA.id);
+        if (companionPair) {
+          warnings.push({
+            id: `companion-good-${a.id}-${b.id}`,
+            title: `${a.name} and ${b.name}: companion match`,
+            detail: `${seedA.name} and ${seedB.name} are companion plants and can support each other nearby.`,
+            severity: 'info',
+            bedId: a.id
+          });
+        }
+      }
+    }
+
+    return warnings;
+  }
+
+  private getBedCenterDistanceInches(a: BedLayout, b: BedLayout): number {
+    const aX = a.xInches + a.widthInches / 2;
+    const aY = a.yInches + a.heightInches / 2;
+    const bX = b.xInches + b.widthInches / 2;
+    const bY = b.yInches + b.heightInches / 2;
+    return Math.hypot(aX - bX, aY - bY);
+  }
+
+  private removeProjectFromState(projectId: string): void {
+    const remaining = this.projects().filter((project) => project.id !== projectId);
+    if (remaining.length === 0) {
+      return;
+    }
+
+    const nextActive = remaining[0];
+    this.projects.set(remaining);
+    this.activeProjectId.set(nextActive.id);
+    this.selectedObjectId.set(null);
+    this.selectedSeedId.set(null);
+    this.persistProjectsToStorage();
+  }
+
+  private ensureActiveProjectVisible(): void {
+    const active = this.activeProject();
+    if (!active?.archivedAtIso) {
+      return;
+    }
+
+    const fallback = this.projects().find((project) => !project.archivedAtIso);
+    if (!fallback) {
+      return;
+    }
+
+    this.activeProjectId.set(fallback.id);
+    this.selectedObjectId.set(null);
+  }
+
   private patchProject(updater: (project: GardenProject) => GardenProject): void {
     const currentId = this.activeProjectId();
     const updated = this.projects().map((project) =>
@@ -317,6 +616,7 @@ export class PlannerStateService {
     );
 
     this.projects.set(updated);
+    this.persistProjectsToStorage();
   }
 
   private patchObject(objectId: string, updater: (object: LayoutObject) => LayoutObject): void {
@@ -344,6 +644,23 @@ export class PlannerStateService {
     }
   }
 
+  private persistProjectsToStorage(): void {
+    this.storage?.setItem(STORAGE_KEY, JSON.stringify(this.projects()));
+  }
+
+  private clearTaskCompletionForBed(bedId: string): void {
+    const taskIdsForBed = new Set([
+      `task-plan-${bedId}`,
+      `task-harvest-${bedId}`,
+      `task-succession-${bedId}`
+    ]);
+
+    this.patchProject((project) => ({
+      ...project,
+      completedTaskIds: (project.completedTaskIds ?? []).filter((taskId) => !taskIdsForBed.has(taskId))
+    }));
+  }
+
   private createStarterProject(): GardenProject {
     const now = new Date().toISOString();
 
@@ -354,6 +671,7 @@ export class PlannerStateService {
       climateZone: '6b',
       lastFrostDateIso: '2026-04-20T00:00:00.000Z',
       firstFrostDateIso: '2026-10-15T00:00:00.000Z',
+      completedTaskIds: [],
       updatedAtIso: now,
       seeds: [
         {
@@ -371,6 +689,7 @@ export class PlannerStateService {
           soilPhMax: 6.8,
           successionFriendly: false,
           yield: { averagePoundsPerPlant: 10 },
+          companionSeedIds: ['seed-lettuce-romaine'],
           notes: 'Indeterminate cherry tomato.'
         },
         {
@@ -388,6 +707,8 @@ export class PlannerStateService {
           soilPhMax: 7,
           successionFriendly: true,
           yield: { averagePoundsPerPlant: 0.5 },
+          companionSeedIds: ['seed-tomato-sungold'],
+          conflictSeedIds: ['seed-blueberry-patriot'],
           notes: 'Great for succession sowing every 2-3 weeks.'
         },
         {
@@ -405,6 +726,7 @@ export class PlannerStateService {
           soilPhMax: 5.5,
           successionFriendly: false,
           yield: { averagePoundsPerPlant: 6 },
+          conflictSeedIds: ['seed-lettuce-romaine'],
           notes: 'Perennial shrub, acidic soil required.'
         }
       ],

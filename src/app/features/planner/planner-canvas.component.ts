@@ -27,6 +27,7 @@ export class PlannerCanvasComponent implements AfterViewInit {
 
   readonly bedSelected = output<string | null>();
   readonly bedGeometryChanged = output<BedGeometryUpdate>();
+  readonly bedRenameRequested = output<{ bedId: string; currentName: string }>();
 
   readonly stageHost = viewChild.required<ElementRef<HTMLDivElement>>('stageHost');
 
@@ -180,7 +181,7 @@ export class PlannerCanvasComponent implements AfterViewInit {
         width: bed.widthInches * PIXELS_PER_INCH,
         height: bed.heightInches * PIXELS_PER_INCH,
         rotation: bed.rotationDeg,
-        fill: '#9ccf96',
+        fill: this.getBedFillColor(bed),
         stroke: '#2f6f3b',
         strokeWidth: 2,
         cornerRadius: 4,
@@ -190,6 +191,9 @@ export class PlannerCanvasComponent implements AfterViewInit {
       });
 
       rect.on('click tap', () => this.bedSelected.emit(bed.id));
+      rect.on('dblclick dbltap', () => {
+        this.bedRenameRequested.emit({ bedId: bed.id, currentName: bed.name });
+      });
       rect.on('dragend', () => this.emitGeometry(rect));
       rect.on('transformend', () => {
         const updatedWidth = Math.max(12 * PIXELS_PER_INCH, rect.width() * rect.scaleX());
@@ -206,10 +210,15 @@ export class PlannerCanvasComponent implements AfterViewInit {
       const label = new Konva.Text({
         x: rect.x() + 6,
         y: rect.y() + 6,
-        text: bed.name,
+        text: bed.planting ? `${bed.name} • planted` : `${bed.name} • open`,
         fontSize: 12,
         fill: '#204627',
-        listening: false
+        listening: true
+      });
+
+      label.on('click tap', () => this.bedSelected.emit(bed.id));
+      label.on('dblclick dbltap', () => {
+        this.bedRenameRequested.emit({ bedId: bed.id, currentName: bed.name });
       });
       this.bedsLayer.add(label);
     }
@@ -242,6 +251,26 @@ export class PlannerCanvasComponent implements AfterViewInit {
       heightInches: shape.height() / PIXELS_PER_INCH,
       rotationDeg: shape.rotation()
     });
+  }
+
+  private getBedFillColor(bed: BedLayout): string {
+    if (!bed.planting) {
+      return '#d6ddd2';
+    }
+
+    const now = Date.now();
+    const harvestAt = new Date(bed.planting.expectedHarvestDateIso).getTime();
+    const daysUntilHarvest = Math.ceil((harvestAt - now) / (1000 * 60 * 60 * 24));
+
+    if (daysUntilHarvest <= 0) {
+      return '#e18f8f';
+    }
+
+    if (daysUntilHarvest <= 10) {
+      return '#f0c276';
+    }
+
+    return '#9ccf96';
   }
 
   private isCanvasSupported(): boolean {

@@ -22,4 +22,6 @@ export interface SeedMetadata {
   successionFriendly: boolean;
   notes?: string;
   yield: YieldProfile;
+  companionSeedIds?: string[];
+  conflictSeedIds?: string[];
 }

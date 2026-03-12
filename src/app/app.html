@@ -6,6 +6,27 @@
     </div>
 
     <div class="topbar__controls">
+      <label class="control-inline" for="project-select">Project</label>
+      <select
+        id="project-select"
+        class="form-select form-select-sm"
+        [value]="project().id"
+        (change)="setActiveProject(($any($event.target)).value)"
+      >
+        @for (item of visibleProjects(); track item.id) {
+          <option [value]="item.id">{{ item.name }}{{ item.archivedAtIso ? ' (archived)' : '' }}</option>
+        }
+      </select>
+
+      <label class="control-inline control-inline--checkbox">
+        <input
+          type="checkbox"
+          [checked]="showArchivedProjects()"
+          (change)="setShowArchivedProjects(($any($event.target)).checked)"
+        />
+        Show Archived
+      </label>
+
       <label class="control-inline" for="season-select">Season</label>
       <select
         id="season-select"
@@ -21,6 +42,14 @@
 
       <button type="button" class="btn btn-sm btn-outline-success" (click)="saveProject()">Save</button>
       <button type="button" class="btn btn-sm btn-outline-secondary" (click)="reloadProject()">Load</button>
+      <button type="button" class="btn btn-sm btn-outline-primary" (click)="createProject()">New Project</button>
+      <button type="button" class="btn btn-sm btn-outline-primary" (click)="duplicateProject()">Duplicate Project</button>
+      @if (!project().archivedAtIso) {
+        <button type="button" class="btn btn-sm btn-outline-warning" (click)="archiveProject()">Archive Project</button>
+      } @else {
+        <button type="button" class="btn btn-sm btn-outline-warning" (click)="unarchiveProject(project().id)">Unarchive Project</button>
+      }
+      <button type="button" class="btn btn-sm btn-outline-danger" [disabled]="projects().length <= 1" (click)="deleteProject()">Delete Project</button>
       <button type="button" class="btn btn-sm btn-success" (click)="addBed()">Add Bed</button>
     </div>
   </header>
@@ -53,6 +82,7 @@
         [selectedBedId]="selectedObjectId()"
         (bedSelected)="selectBed($event)"
         (bedGeometryChanged)="updateBedGeometry($event)"
+        (bedRenameRequested)="renameBedFromCanvas($event)"
       ></app-planner-canvas>
     </section>
 
@@ -60,6 +90,23 @@
       <section class="panel-section">
         <h2 class="panel__title">Selection</h2>
         <p class="panel__subtitle">{{ selectedBedSummary() }}</p>
+
+        @if (quickRenameBedId()) {
+          <div class="quick-rename-box">
+            <label class="form-label small" for="quick-rename">Rename bed</label>
+            <div class="quick-rename-controls">
+              <input
+                id="quick-rename"
+                class="form-control form-control-sm"
+                [value]="quickRenameValue()"
+                (input)="updateQuickRenameValue($event)"
+                (keydown.enter)="applyQuickRename()"
+              />
+              <button type="button" class="btn btn-sm btn-success" (click)="applyQuickRename()">Apply</button>
+              <button type="button" class="btn btn-sm btn-outline-secondary" (click)="cancelQuickRename()">Cancel</button>
+            </div>
+          </div>
+        }
 
         @if (selectedObject(); as object) {
           <label class="form-label small" for="selected-name">Object name</label>
@@ -75,16 +122,65 @@
               Assign Selected Plant
             </button>
           }
+
+          @if (selectedBed()?.planting) {
+            <button type="button" class="btn btn-sm btn-outline-warning action-btn" (click)="clearSelectedBedPlanting()">
+              Clear Planting
+            </button>
+          }
+
+          <div class="selection-actions">
+            @if (selectedBed()) {
+              <button type="button" class="btn btn-sm btn-outline-secondary" (click)="duplicateSelectedBed()">
+                Duplicate Bed
+              </button>
+            }
+            <button type="button" class="btn btn-sm btn-outline-danger" (click)="deleteSelectedObject()">
+              Delete Selected
+            </button>
+          </div>
         }
       </section>
 
       <section class="panel-section">
         <h2 class="panel__title">Calendar Tasks</h2>
+        <div class="task-filters">
+          <select
+            class="form-select form-select-sm"
+            [value]="taskStatusFilter()"
+            (change)="setTaskStatusFilter(($any($event.target)).value)"
+          >
+            <option value="all">All Tasks</option>
+            <option value="open">Open</option>
+            <option value="completed">Completed</option>
+          </select>
+
+          <select
+            class="form-select form-select-sm"
+            [value]="taskBedFilter()"
+            (change)="setTaskBedFilter(($any($event.target)).value)"
+          >
+            <option value="all">All Beds</option>
+            @for (bed of beds(); track bed.id) {
+              <option [value]="bed.id">{{ bed.name }}</option>
+            }
+          </select>
+        </div>
+
         <div class="stack-list">
-          @for (task of tasks(); track task.id) {
-            <article class="item-card">
+          @for (task of filteredTasks(); track task.id) {
+            <article class="item-card item-card--clickable" [class.item-card--completed]="task.completed" (click)="focusBed(task.bedId)">
               <p class="item-card__title">{{ task.title }}</p>
-              <p class="item-card__meta">{{ task.dueDateIso | date: 'MMM d, y' }} • {{ task.priority }}</p>
+              <p class="item-card__meta">{{ task.dueDateIso | date: 'MMM d, y' }} • {{ getBedName(task.bedId) }} • {{ task.priority }}</p>
+              <label class="task-toggle">
+                <input
+                  type="checkbox"
+                  [checked]="task.completed"
+                  (click)="$event.stopPropagation()"
+                  (change)="toggleTaskCompletion(task.id, $event)"
+                />
+                <span>{{ task.completed ? 'Completed' : 'Mark complete' }}</span>
+              </label>
             </article>
           }
         </div>
@@ -94,7 +190,7 @@
         <h2 class="panel__title">Warnings</h2>
         <div class="stack-list">
           @for (warning of warnings(); track warning.id) {
-            <article class="item-card" [class.item-card--critical]="warning.severity === 'critical'">
+            <article class="item-card item-card--clickable" [class.item-card--critical]="warning.severity === 'critical'" (click)="focusBed(warning.bedId)">
               <p class="item-card__title">{{ warning.title }}</p>
               <p class="item-card__meta">{{ warning.detail }}</p>
             </article>
