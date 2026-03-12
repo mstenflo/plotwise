@@ -1,0 +1,106 @@
+<div class="planner-workspace">
+  <header class="topbar">
+    <div class="topbar__title-wrap">
+      <h1 class="topbar__title">Plotwise Planner</h1>
+      <p class="topbar__subtitle">{{ project().name }} • Zone {{ project().climateZone }}</p>
+    </div>
+
+    <div class="topbar__controls">
+      <label class="control-inline" for="season-select">Season</label>
+      <select
+        id="season-select"
+        class="form-select form-select-sm"
+        [value]="project().season"
+        (change)="setSeason(($any($event.target)).value)"
+      >
+        <option value="spring">Spring</option>
+        <option value="summer">Summer</option>
+        <option value="fall">Fall</option>
+        <option value="winter">Winter</option>
+      </select>
+
+      <button type="button" class="btn btn-sm btn-outline-success" (click)="saveProject()">Save</button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" (click)="reloadProject()">Load</button>
+      <button type="button" class="btn btn-sm btn-success" (click)="addBed()">Add Bed</button>
+    </div>
+  </header>
+
+  <main class="main-grid">
+    <aside class="panel panel--left" aria-label="Plant library">
+      <h2 class="panel__title">Plant Library</h2>
+      <p class="panel__subtitle">Annuals and perennials from your seed inventory.</p>
+
+      <div class="seed-list">
+        @for (seed of seeds(); track seed.id) {
+          <button
+            type="button"
+            class="seed-card"
+            [class.seed-card--selected]="selectedSeedId() === seed.id"
+            (click)="selectSeed(seed.id)"
+          >
+            <span class="seed-card__name">{{ seed.name }} - {{ seed.variety }}</span>
+            <span class="seed-card__meta">
+              {{ seed.lifecycle }} • spacing {{ seed.spacingInches }}in x {{ seed.rowSpacingInches }}in • {{ seed.daysToMaturity }} days
+            </span>
+          </button>
+        }
+      </div>
+    </aside>
+
+    <section class="planner-canvas-area" aria-label="Planning canvas">
+      <app-planner-canvas
+        [beds]="beds()"
+        [selectedBedId]="selectedObjectId()"
+        (bedSelected)="selectBed($event)"
+        (bedGeometryChanged)="updateBedGeometry($event)"
+      ></app-planner-canvas>
+    </section>
+
+    <aside class="panel panel--right" aria-label="Planner insights">
+      <section class="panel-section">
+        <h2 class="panel__title">Selection</h2>
+        <p class="panel__subtitle">{{ selectedBedSummary() }}</p>
+
+        @if (selectedObject(); as object) {
+          <label class="form-label small" for="selected-name">Object name</label>
+          <input
+            id="selected-name"
+            class="form-control form-control-sm"
+            [value]="object.name"
+            (input)="renameSelectedObject($event)"
+          />
+
+          @if (selectedBed() && selectedSeedId()) {
+            <button type="button" class="btn btn-sm btn-success action-btn" (click)="assignSeedToSelectedBed()">
+              Assign Selected Plant
+            </button>
+          }
+        }
+      </section>
+
+      <section class="panel-section">
+        <h2 class="panel__title">Calendar Tasks</h2>
+        <div class="stack-list">
+          @for (task of tasks(); track task.id) {
+            <article class="item-card">
+              <p class="item-card__title">{{ task.title }}</p>
+              <p class="item-card__meta">{{ task.dueDateIso | date: 'MMM d, y' }} • {{ task.priority }}</p>
+            </article>
+          }
+        </div>
+      </section>
+
+      <section class="panel-section">
+        <h2 class="panel__title">Warnings</h2>
+        <div class="stack-list">
+          @for (warning of warnings(); track warning.id) {
+            <article class="item-card" [class.item-card--critical]="warning.severity === 'critical'">
+              <p class="item-card__title">{{ warning.title }}</p>
+              <p class="item-card__meta">{{ warning.detail }}</p>
+            </article>
+          }
+        </div>
+      </section>
+    </aside>
+  </main>
+</div>

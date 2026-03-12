@@ -1,0 +1,15 @@
+@import 'bootstrap/scss/bootstrap';
+
+:root {
+	color-scheme: only light;
+}
+
+html,
+body {
+	min-height: 100%;
+}
+
+body {
+	margin: 0;
+	font-family: 'Avenir Next', 'Segoe UI', sans-serif;
+}
