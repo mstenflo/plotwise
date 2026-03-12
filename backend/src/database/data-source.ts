@@ -1,0 +1,35 @@
+import 'dotenv/config';
+import { DataSource } from 'typeorm';
+import { PlannerProjectEntity } from '../planner/entities/planner-project.entity';
+
+const dbPort = Number(process.env.DB_PORT ?? '5432');
+const dbSsl = process.env.DB_SSL === 'true';
+
+const hasDatabaseUrl = !!process.env.DATABASE_URL;
+
+const resolveSslConfig = () => {
+  if (!dbSsl) {
+    return false;
+  }
+
+  const rejectUnauthorized =
+    process.env.DB_SSL_REJECT_UNAUTHORIZED !== undefined
+      ? process.env.DB_SSL_REJECT_UNAUTHORIZED === 'true'
+      : (process.env.NODE_ENV ?? 'development') === 'production';
+
+  return { rejectUnauthorized };
+};
+
+export default new DataSource({
+  type: 'postgres',
+  url: hasDatabaseUrl ? process.env.DATABASE_URL : undefined,
+  host: hasDatabaseUrl ? undefined : (process.env.DB_HOST ?? 'localhost'),
+  port: hasDatabaseUrl ? undefined : dbPort,
+  username: hasDatabaseUrl ? undefined : (process.env.DB_USER ?? 'postgres'),
+  password: hasDatabaseUrl ? undefined : (process.env.DB_PASSWORD ?? 'postgres'),
+  database: hasDatabaseUrl ? undefined : (process.env.DB_NAME ?? 'plotwise'),
+  ssl: resolveSslConfig(),
+  entities: [PlannerProjectEntity],
+  migrations: ['src/database/migrations/*{.ts,.js}'],
+  synchronize: false,
+});

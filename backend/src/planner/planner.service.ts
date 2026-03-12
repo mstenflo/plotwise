@@ -1,39 +1,57 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { CreateProjectDto } from './dto/create-project.dto';
+import { PlannerProjectEntity } from './entities/planner-project.entity';
 import { GardenProject } from './models/planner.types';
 
 @Injectable()
-export class PlannerService {
-  private readonly projects = new Map<string, GardenProject>([[
-    'project-home',
-    this.createStarterProject()
-  ]]);
+export class PlannerService implements OnModuleInit {
+  constructor(
+    @InjectRepository(PlannerProjectEntity)
+    private readonly projectRepository: Repository<PlannerProjectEntity>
+  ) {}
 
-  listProjects(): GardenProject[] {
-    return [...this.projects.values()].sort((a, b) => b.updatedAtIso.localeCompare(a.updatedAtIso));
+  async onModuleInit(): Promise<void> {
+    const count = await this.projectRepository.count();
+    if (count > 0) {
+      return;
+    }
+
+    await this.projectRepository.save(this.toEntity(this.createStarterProject()));
   }
 
-  getProject(id: string): GardenProject {
-    const project = this.projects.get(id);
+  async listProjects(): Promise<GardenProject[]> {
+    const projects = await this.projectRepository.find({
+      order: {
+        updatedAtIso: 'DESC'
+      }
+    });
+
+    return projects.map((project) => this.toProject(project));
+  }
+
+  async getProject(id: string): Promise<GardenProject> {
+    const project = await this.projectRepository.findOneBy({ id });
     if (!project) {
       throw new NotFoundException(`Project ${id} not found`);
     }
 
-    return project;
+    return this.toProject(project);
   }
 
-  saveProject(id: string, project: GardenProject): GardenProject {
+  async saveProject(id: string, project: GardenProject): Promise<GardenProject> {
     const updated: GardenProject = {
       ...project,
       id,
       updatedAtIso: new Date().toISOString()
     };
 
-    this.projects.set(id, updated);
-    return updated;
+    const saved = await this.projectRepository.save(this.toEntity(updated));
+    return this.toProject(saved);
   }
 
-  createProject(input: CreateProjectDto): GardenProject {
+  async createProject(input: CreateProjectDto): Promise<GardenProject> {
     const now = new Date().toISOString();
     const id = `project-${crypto.randomUUID().slice(0, 8)}`;
 
@@ -49,14 +67,43 @@ export class PlannerService {
       objects: []
     };
 
-    this.projects.set(id, project);
-    return project;
+    const saved = await this.projectRepository.save(this.toEntity(project));
+    return this.toProject(saved);
   }
 
-  deleteProject(id: string): void {
-    if (!this.projects.delete(id)) {
+  async deleteProject(id: string): Promise<void> {
+    const result = await this.projectRepository.delete({ id });
+    if (!result.affected) {
       throw new NotFoundException(`Project ${id} not found`);
     }
+  }
+
+  private toProject(entity: PlannerProjectEntity): GardenProject {
+    return {
+      id: entity.id,
+      name: entity.name,
+      season: entity.season,
+      climateZone: entity.climateZone,
+      lastFrostDateIso: entity.lastFrostDateIso,
+      firstFrostDateIso: entity.firstFrostDateIso,
+      seeds: entity.seeds,
+      objects: entity.objects,
+      updatedAtIso: entity.updatedAtIso
+    };
+  }
+
+  private toEntity(project: GardenProject): PlannerProjectEntity {
+    return this.projectRepository.create({
+      id: project.id,
+      name: project.name,
+      season: project.season,
+      climateZone: project.climateZone,
+      lastFrostDateIso: project.lastFrostDateIso,
+      firstFrostDateIso: project.firstFrostDateIso,
+      seeds: project.seeds,
+      objects: project.objects,
+      updatedAtIso: project.updatedAtIso
+    });
   }
 
   private createStarterProject(): GardenProject {
