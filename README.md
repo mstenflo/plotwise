@@ -1,89 +1,118 @@
 # Plotwise
 
-This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 21.2.1.
+Plotwise is a garden planning app for designing beds, assigning crops, and tracking seasonal work.
 
-## Development server
+It includes:
 
-To start a local development server, run:
+- An interactive planner canvas with zoom, pan, and grid snapping
+- Support for rectangular and polygon bed layouts
+- Seed library and bed-to-crop assignment
+- Multi-project workflows with archive and duplication
+- Task and planting synchronization through a NestJS API
 
-```bash
-ng serve
-```
+## Tech Stack
 
-Once the server is running, open your browser and navigate to `http://localhost:4200/`. The application will automatically reload whenever you modify any of the source files.
+- Frontend: Angular 21
+- Backend: NestJS 11 + TypeORM
+- Database: PostgreSQL 16
+- Canvas rendering: Konva
 
-## Code scaffolding
+## Quick Start (Local)
 
-Angular CLI includes powerful code scaffolding tools. To generate a new component, run:
+### 1. Prerequisites
 
-```bash
-ng generate component component-name
-```
+- Node.js 22+ (recommended)
+- npm 11+
+- Docker Desktop (for local PostgreSQL)
 
-For a complete list of available schematics (such as `components`, `directives`, or `pipes`), run:
+### 2. Install dependencies
 
-```bash
-ng generate --help
-```
-
-## Building
-
-To build the project run:
-
-```bash
-ng build
-```
-
-This will compile your project and store the build artifacts in the `dist/` directory. By default, the production build optimizes your application for performance and speed.
-
-## Running unit tests
-
-To execute unit tests with the [Vitest](https://vitest.dev/) test runner, use the following command:
+From the repository root:
 
 ```bash
-ng test
+npm install
 ```
 
-## Running end-to-end tests
-
-For end-to-end (e2e) testing, run:
+Install backend dependencies:
 
 ```bash
-ng e2e
+cd backend
+npm install
+cd ..
 ```
 
-Angular CLI does not come with an end-to-end testing framework by default. You can choose one that suits your needs.
-
-## Additional Resources
-
-For more information on using the Angular CLI, including detailed command references, visit the [Angular CLI Overview and Command Reference](https://angular.dev/tools/cli) page.
-
-## Backend Database Setup
-
-The backend API lives in `backend/` and uses PostgreSQL + TypeORM migrations.
-
-1. Create backend env config:
+### 3. Configure backend environment
 
 ```bash
 cp backend/.env.example backend/.env
 ```
 
-2. Start a local PostgreSQL instance (optional if using a managed DB URL):
+### 4. Start PostgreSQL
 
 ```bash
 docker compose up -d postgres
 ```
 
-3. Run backend migrations:
+### 5. Run the full app (frontend + backend)
 
 ```bash
-cd backend
-npm run migration:run
+npm run dev
 ```
 
-4. Start backend:
+This starts:
+
+- Frontend at http://localhost:4200
+- Backend API at http://localhost:3000
+
+The `dev` script also runs backend migrations before starting the API.
+
+## Running Services Separately
+
+Frontend only:
+
+```bash
+npm run start:frontend
+```
+
+Backend only:
+
+```bash
+npm run start:backend
+```
+
+## Testing
+
+Frontend tests:
+
+```bash
+npm test -- --watch=false
+```
+
+Backend tests:
 
 ```bash
 cd backend
-npm run start:dev
+npm test
+```
+
+Backend e2e tests:
+
+```bash
+cd backend
+npm run test:e2e
+```
+
+## Build
+
+Frontend production build:
+
+```bash
+npm run build
+```
+
+Backend production build:
+
+```bash
+cd backend
+npm run build
 ```
