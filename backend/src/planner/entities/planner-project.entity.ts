@@ -31,6 +31,12 @@ export class PlannerProjectEntity {
   @Column({ type: 'jsonb', default: () => "'[]'" })
   objects!: LayoutObject[];
 
+  @Column({ type: 'jsonb', default: () => "'[]'" })
+  completedTaskIds!: string[];
+
+  @Column({ type: 'timestamptz', nullable: true })
+  archivedAtIso?: string;
+
   @Column({ type: 'timestamptz' })
   updatedAtIso!: string;
 }

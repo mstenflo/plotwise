@@ -150,6 +150,161 @@
 	flex-wrap: wrap;
 }
 
+.geometry-editor {
+	margin-top: 0.6rem;
+	border: 1px solid #d1e2cd;
+	background: #f4faf2;
+	border-radius: 8px;
+	padding: 0.5rem;
+}
+
+.geometry-editor__title {
+	margin: 0 0 0.35rem;
+	font-size: 0.78rem;
+	font-weight: 700;
+	color: #3a5a42;
+}
+
+.geometry-editor__summary {
+	margin: 0 0 0.45rem;
+	font-size: 0.72rem;
+	color: #48654f;
+}
+
+.geometry-editor__grid {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 0.4rem;
+}
+
+.geometry-editor__field {
+	display: flex;
+	flex-direction: column;
+	gap: 0.2rem;
+	font-size: 0.72rem;
+	color: #48654f;
+}
+
+.geometry-editor__field--full {
+	grid-column: 1 / -1;
+}
+
+.zone-editor {
+	margin-top: 0.6rem;
+	border: 1px solid #d1e2cd;
+	background: #f4faf2;
+	border-radius: 8px;
+	padding: 0.5rem;
+}
+
+.zone-editor__title {
+	margin: 0 0 0.4rem;
+	font-size: 0.78rem;
+	font-weight: 700;
+	color: #3a5a42;
+}
+
+.zone-list {
+	display: flex;
+	flex-direction: column;
+	gap: 0.35rem;
+}
+
+.zone-item {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.5rem;
+	padding: 0.35rem 0.45rem;
+	border: 1px solid #d6e5d2;
+	border-radius: 7px;
+	background: #f9fcf8;
+}
+
+.zone-item--planted {
+	border-color: #95bc93;
+	background: #edf7ea;
+}
+
+.zone-item__name {
+	margin: 0;
+	font-size: 0.75rem;
+	font-weight: 700;
+	color: #33503a;
+}
+
+.zone-item__meta {
+	margin: 0.1rem 0 0;
+	font-size: 0.72rem;
+	color: #48654f;
+}
+
+.zone-settings {
+	margin-top: 0.35rem;
+	display: grid;
+	grid-template-columns: 1fr auto;
+	gap: 0.3rem;
+	align-items: end;
+}
+
+.zone-setting {
+	display: flex;
+	flex-direction: column;
+	gap: 0.15rem;
+	font-size: 0.68rem;
+	color: #48654f;
+}
+
+.zone-rect-grid {
+	margin-top: 0.35rem;
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 0.3rem;
+}
+
+.zone-rect-grid label {
+	display: flex;
+	flex-direction: column;
+	gap: 0.15rem;
+	font-size: 0.68rem;
+	color: #48654f;
+}
+
+.polygon-editor {
+	margin-top: 0.4rem;
+	padding-top: 0.35rem;
+	border-top: 1px dashed #cfe0cb;
+	display: flex;
+	flex-direction: column;
+	gap: 0.3rem;
+
+	&__header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		font-size: 0.68rem;
+		color: #48654f;
+	}
+
+	&__row {
+		display: grid;
+		grid-template-columns: auto 1fr 1fr auto;
+		gap: 0.3rem;
+		align-items: center;
+	}
+
+	&__index {
+		font-size: 0.68rem;
+		font-weight: 700;
+		color: #3d5f46;
+	}
+}
+
+.zone-item__actions {
+	display: inline-flex;
+	gap: 0.35rem;
+}
+
 .stack-list {
 	display: flex;
 	flex-direction: column;

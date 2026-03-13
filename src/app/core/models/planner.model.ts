@@ -3,6 +3,26 @@ import { SeedMetadata, SunExposure } from './seed.model';
 export type ProjectSeason = 'spring' | 'summer' | 'fall' | 'winter';
 export type LayoutObjectType = 'bed' | 'structure' | 'tree';
 export type WarningSeverity = 'info' | 'warning' | 'critical';
+export type CanvasToolMode = 'select' | 'pan' | 'draw-bed' | 'draw-polygon-bed';
+export type BedShapeType = 'rectangle' | 'polygon';
+export type ZoneShapeType = 'row-strip' | 'square' | 'polygon';
+
+export interface ShapePoint {
+  xPct: number;
+  yPct: number;
+}
+
+export interface BedPolygonDraftPoint {
+  xInches: number;
+  yInches: number;
+}
+
+export interface ZoneRect {
+  xPct: number;
+  yPct: number;
+  widthPct: number;
+  heightPct: number;
+}
 
 export interface SoilCondition {
   ph: number;
@@ -29,11 +49,25 @@ export interface BedPlanting {
   expectedHarvestDateIso: string;
 }
 
+export interface BedZone {
+  id: string;
+  name: string;
+  rowIndex: number;
+  shapeType?: ZoneShapeType;
+  colorHex?: string;
+  rect?: ZoneRect;
+  polygon?: ShapePoint[];
+  planting?: BedPlanting;
+}
+
 export interface BedLayout extends LayoutObjectBase {
   type: 'bed';
+  shapeType?: BedShapeType;
+  polygon?: ShapePoint[];
   sunExposure: SunExposure;
   soil: SoilCondition;
   rows: number;
+  zones?: BedZone[];
   planting?: BedPlanting;
   lastSeasonFamily?: string;
 }
@@ -87,4 +121,11 @@ export interface BedGeometryUpdate {
   widthInches: number;
   heightInches: number;
   rotationDeg: number;
+}
+
+export interface BedDraftGeometry {
+  xInches: number;
+  yInches: number;
+  widthInches: number;
+  heightInches: number;
 }

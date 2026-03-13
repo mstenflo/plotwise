@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { join } from 'node:path';
 import { HealthController } from './health.controller';
 import { PlannerModule } from './planner/planner.module';
 
@@ -36,6 +37,7 @@ const resolveSslConfig = (config: ConfigService) => {
         autoLoadEntities: true,
         synchronize: config.get<string>('TYPEORM_SYNCHRONIZE', 'false') === 'true',
         migrationsRun: config.get<string>('TYPEORM_MIGRATIONS_RUN', 'false') === 'true',
+        migrations: [join(__dirname, 'database/migrations/*{.ts,.js}')],
       }),
     }),
     PlannerModule,

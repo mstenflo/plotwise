@@ -1,5 +1,9 @@
-import { Body, Controller, Delete, Get, Param, Post, Put } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { CreateProjectDto } from './dto/create-project.dto';
+import { CreatePlantingDto } from './dto/create-planting.dto';
+import { CalendarTaskRecord, PlantingRecord } from './dto/planning.types';
+import { UpsertPlantingDto } from './dto/upsert-planting.dto';
+import { UpdateTaskStatusDto } from './dto/update-task-status.dto';
 import { PlannerService } from './planner.service';
 import type { GardenProject } from './models/planner.types';
 
@@ -15,6 +19,84 @@ export class PlannerController {
   @Get(':id')
   async getProject(@Param('id') id: string): Promise<GardenProject> {
     return this.plannerService.getProject(id);
+  }
+
+  @Get(':id/plantings')
+  async getProjectPlantings(@Param('id') id: string): Promise<PlantingRecord[]> {
+    return this.plannerService.listProjectPlantings(id);
+  }
+
+  @Get(':id/tasks')
+  async getProjectTasks(
+    @Param('id') id: string,
+    @Query('bedId') bedId?: string,
+    @Query('zoneId') zoneId?: string,
+    @Query('completed') completed?: 'true' | 'false',
+  ): Promise<CalendarTaskRecord[]> {
+    return this.plannerService.listProjectTasks(id, {
+      bedId,
+      zoneId,
+      completed: completed === undefined ? undefined : completed === 'true',
+    });
+  }
+
+  @Post(':id/tasks/sync')
+  async syncProjectTasks(@Param('id') id: string): Promise<{ synced: true }> {
+    await this.plannerService.syncProjectTasks(id);
+    return { synced: true };
+  }
+
+  @Post(':id/plantings')
+  async createPlanting(
+    @Param('id') id: string,
+    @Body() body: CreatePlantingDto,
+  ): Promise<PlantingRecord> {
+    return this.plannerService.createPlanting(id, body);
+  }
+
+  @Put(':id/plantings/:bedId')
+  async upsertPlantingForBed(
+    @Param('id') id: string,
+    @Param('bedId') bedId: string,
+    @Body() body: UpsertPlantingDto,
+  ): Promise<PlantingRecord> {
+    return this.plannerService.upsertPlanting(id, bedId, undefined, body);
+  }
+
+  @Put(':id/plantings/:bedId/:zoneId')
+  async upsertPlantingForZone(
+    @Param('id') id: string,
+    @Param('bedId') bedId: string,
+    @Param('zoneId') zoneId: string,
+    @Body() body: UpsertPlantingDto,
+  ): Promise<PlantingRecord> {
+    return this.plannerService.upsertPlanting(id, bedId, zoneId, { ...body, zoneId });
+  }
+
+  @Delete(':id/plantings/:bedId')
+  async deletePlantingForBed(
+    @Param('id') id: string,
+    @Param('bedId') bedId: string,
+  ): Promise<{ deleted: true }> {
+    return this.plannerService.deletePlanting(id, bedId);
+  }
+
+  @Delete(':id/plantings/:bedId/:zoneId')
+  async deletePlantingForZone(
+    @Param('id') id: string,
+    @Param('bedId') bedId: string,
+    @Param('zoneId') zoneId: string,
+  ): Promise<{ deleted: true }> {
+    return this.plannerService.deletePlanting(id, bedId, zoneId);
+  }
+
+  @Patch(':id/tasks/:taskId')
+  async updateTaskStatus(
+    @Param('id') id: string,
+    @Param('taskId') taskId: string,
+    @Body() body: UpdateTaskStatusDto,
+  ): Promise<CalendarTaskRecord> {
+    return this.plannerService.updateTaskStatus(id, taskId, body.completed);
   }
 
   @Post()

@@ -40,6 +40,24 @@
         <option value="winter">Winter</option>
       </select>
 
+      <label class="control-inline" for="tool-select">Tool</label>
+      <select
+        id="tool-select"
+        class="form-select form-select-sm"
+        [value]="canvasToolMode()"
+        (change)="setCanvasToolMode(($any($event.target)).value)"
+      >
+        <option value="select">Select</option>
+        <option value="pan">Pan</option>
+        <option value="draw-bed">Draw Bed</option>
+        <option value="draw-polygon-bed">Draw Polygon Bed</option>
+      </select>
+
+      <label class="control-inline control-inline--checkbox">
+        <input type="checkbox" [checked]="snapToGrid()" (change)="setSnapToGrid($event)" />
+        Snap to Grid
+      </label>
+
       <button type="button" class="btn btn-sm btn-outline-success" (click)="saveProject()">Save</button>
       <button type="button" class="btn btn-sm btn-outline-secondary" (click)="reloadProject()">Load</button>
       <button type="button" class="btn btn-sm btn-outline-primary" (click)="createProject()">New Project</button>
@@ -80,9 +98,13 @@
       <app-planner-canvas
         [beds]="beds()"
         [selectedBedId]="selectedObjectId()"
+        [toolMode]="canvasToolMode()"
+        [snapToGrid]="snapToGrid()"
         (bedSelected)="selectBed($event)"
         (bedGeometryChanged)="updateBedGeometry($event)"
         (bedRenameRequested)="renameBedFromCanvas($event)"
+        (bedDrawn)="addBedFromCanvas($event)"
+        (polygonBedDrawn)="addPolygonBedFromCanvas($event)"
       ></app-planner-canvas>
     </section>
 
@@ -123,9 +145,221 @@
             </button>
           }
 
-          @if (selectedBed()?.planting) {
+          @if (selectedBed(); as bed) {
+            <div class="geometry-editor">
+              <h3 class="geometry-editor__title">Bed Geometry (inches)</h3>
+              <p class="geometry-editor__summary">
+                Size {{ formatImperial(bed.widthInches) }} x {{ formatImperial(bed.heightInches) }} • Area {{ selectedBedAreaSqFt() }} sq ft
+              </p>
+              <div class="geometry-editor__grid">
+                <label class="geometry-editor__field">
+                  <span>X</span>
+                  <input
+                    class="form-control form-control-sm"
+                    type="number"
+                    [value]="bed.xInches"
+                    (change)="updateSelectedBedDimension('xInches', $event)"
+                  />
+                </label>
+                <label class="geometry-editor__field">
+                  <span>Y</span>
+                  <input
+                    class="form-control form-control-sm"
+                    type="number"
+                    [value]="bed.yInches"
+                    (change)="updateSelectedBedDimension('yInches', $event)"
+                  />
+                </label>
+                <label class="geometry-editor__field">
+                  <span>Width</span>
+                  <input
+                    class="form-control form-control-sm"
+                    type="number"
+                    [value]="bed.widthInches"
+                    (change)="updateSelectedBedDimension('widthInches', $event)"
+                  />
+                </label>
+                <label class="geometry-editor__field">
+                  <span>Height</span>
+                  <input
+                    class="form-control form-control-sm"
+                    type="number"
+                    [value]="bed.heightInches"
+                    (change)="updateSelectedBedDimension('heightInches', $event)"
+                  />
+                </label>
+                <label class="geometry-editor__field geometry-editor__field--full">
+                  <span>Rotation (deg)</span>
+                  <input
+                    class="form-control form-control-sm"
+                    type="number"
+                    step="0.1"
+                    [value]="bed.rotationDeg"
+                    (change)="updateSelectedBedDimension('rotationDeg', $event)"
+                  />
+                </label>
+                <label class="geometry-editor__field geometry-editor__field--full">
+                  <span>Rows</span>
+                  <input
+                    class="form-control form-control-sm"
+                    type="number"
+                    min="1"
+                    [value]="bed.rows"
+                    (change)="updateSelectedBedRows($event)"
+                  />
+                </label>
+                <label class="geometry-editor__field geometry-editor__field--full">
+                  <span>Bed Shape</span>
+                  <select class="form-select form-select-sm" [value]="bed.shapeType ?? 'rectangle'" (change)="setSelectedBedShapeType($event)">
+                    <option value="rectangle">Rectangle</option>
+                    <option value="polygon">Polygon</option>
+                  </select>
+                </label>
+
+                @if ((bed.shapeType ?? 'rectangle') === 'polygon') {
+                  <div class="polygon-editor">
+                    <div class="polygon-editor__header">
+                      <span>Bed Polygon Points</span>
+                      <button type="button" class="btn btn-sm btn-outline-secondary" (click)="addBedPolygonPoint()">Add Point</button>
+                    </div>
+                    @for (point of selectedBedPolygonPoints(); track $index) {
+                      <div class="polygon-editor__row">
+                        <span class="polygon-editor__index">#{{ $index + 1 }}</span>
+                        <input
+                          class="form-control form-control-sm"
+                          type="number"
+                          min="0"
+                          max="100"
+                          [value]="(point.xPct * 100).toFixed(0)"
+                          (change)="updateBedPolygonPoint($index, 'xPct', $event)"
+                        />
+                        <input
+                          class="form-control form-control-sm"
+                          type="number"
+                          min="0"
+                          max="100"
+                          [value]="(point.yPct * 100).toFixed(0)"
+                          (change)="updateBedPolygonPoint($index, 'yPct', $event)"
+                        />
+                        <button type="button" class="btn btn-sm btn-outline-danger" (click)="removeBedPolygonPoint($index)">Remove</button>
+                      </div>
+                    }
+                  </div>
+                }
+              </div>
+            </div>
+
+            <div class="zone-editor">
+              <h3 class="zone-editor__title">Bed Rows</h3>
+              <div class="zone-list">
+                @for (zone of selectedBedZones(); track zone.id) {
+                  <article class="zone-item" [class.zone-item--planted]="!!zone.planting">
+                    <div>
+                      <p class="zone-item__name">{{ zone.name }}</p>
+                      <p class="zone-item__meta">
+                        @if (zone.planting) {
+                          {{ getSeedName(zone.planting.seedId) }} • {{ zone.planting.plantCount }} plants • harvest {{ zone.planting.expectedHarvestDateIso | date: 'MMM d' }}
+                        } @else {
+                          Open row
+                        }
+                      </p>
+                      <div class="zone-settings">
+                        <label class="zone-setting">
+                          <span>Shape</span>
+                          <select
+                            class="form-select form-select-sm"
+                            [value]="zone.shapeType ?? 'row-strip'"
+                            (change)="setZoneShapeType(zone.id, $event)"
+                          >
+                            <option value="row-strip">Row Strip</option>
+                            <option value="square">Square</option>
+                            <option value="polygon">Polygon</option>
+                          </select>
+                        </label>
+                        <label class="zone-setting">
+                          <span>Color</span>
+                          <input
+                            class="form-control form-control-sm form-control-color"
+                            type="color"
+                            [value]="zone.colorHex ?? '#7ab77d'"
+                            (change)="setZoneColor(zone.id, $event)"
+                          />
+                        </label>
+                      </div>
+
+                      @if (zone.shapeType === 'square') {
+                        <div class="zone-rect-grid">
+                          <label>
+                            X%
+                            <input class="form-control form-control-sm" type="number" min="0" max="100" [value]="((zone.rect?.xPct ?? 0.08) * 100).toFixed(0)" (change)="updateZoneRect(zone.id, 'xPct', $event)" />
+                          </label>
+                          <label>
+                            Y%
+                            <input class="form-control form-control-sm" type="number" min="0" max="100" [value]="((zone.rect?.yPct ?? 0.1) * 100).toFixed(0)" (change)="updateZoneRect(zone.id, 'yPct', $event)" />
+                          </label>
+                          <label>
+                            W%
+                            <input class="form-control form-control-sm" type="number" min="1" max="100" [value]="((zone.rect?.widthPct ?? 0.32) * 100).toFixed(0)" (change)="updateZoneRect(zone.id, 'widthPct', $event)" />
+                          </label>
+                          <label>
+                            H%
+                            <input class="form-control form-control-sm" type="number" min="1" max="100" [value]="((zone.rect?.heightPct ?? 0.8) * 100).toFixed(0)" (change)="updateZoneRect(zone.id, 'heightPct', $event)" />
+                          </label>
+                        </div>
+                      }
+
+                      @if (zone.shapeType === 'polygon') {
+                        <div class="polygon-editor zone-polygon-editor">
+                          <div class="polygon-editor__header">
+                            <span>Zone Polygon Points</span>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" (click)="addZonePolygonPoint(zone.id)">Add Point</button>
+                          </div>
+                          @for (point of getZonePolygonPoints(zone.id); track $index) {
+                            <div class="polygon-editor__row">
+                              <span class="polygon-editor__index">#{{ $index + 1 }}</span>
+                              <input
+                                class="form-control form-control-sm"
+                                type="number"
+                                min="0"
+                                max="100"
+                                [value]="(point.xPct * 100).toFixed(0)"
+                                (change)="updateZonePolygonPoint(zone.id, $index, 'xPct', $event)"
+                              />
+                              <input
+                                class="form-control form-control-sm"
+                                type="number"
+                                min="0"
+                                max="100"
+                                [value]="(point.yPct * 100).toFixed(0)"
+                                (change)="updateZonePolygonPoint(zone.id, $index, 'yPct', $event)"
+                              />
+                              <button type="button" class="btn btn-sm btn-outline-danger" (click)="removeZonePolygonPoint(zone.id, $index)">Remove</button>
+                            </div>
+                          }
+                        </div>
+                      }
+                    </div>
+                    <div class="zone-item__actions">
+                      @if (selectedSeedId()) {
+                        <button type="button" class="btn btn-sm btn-outline-success" (click)="assignSeedToZone(zone.id)">
+                          Assign
+                        </button>
+                      }
+                      @if (zone.planting) {
+                        <button type="button" class="btn btn-sm btn-outline-warning" (click)="clearZonePlanting(zone.id)">
+                          Clear
+                        </button>
+                      }
+                    </div>
+                  </article>
+                }
+              </div>
+            </div>
+          }
+
+          @if (hasSelectedBedPlantings()) {
             <button type="button" class="btn btn-sm btn-outline-warning action-btn" (click)="clearSelectedBedPlanting()">
-              Clear Planting
+              Clear All Bed Plantings
             </button>
           }
 

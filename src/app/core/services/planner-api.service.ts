@@ -1,8 +1,9 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { GardenProject } from '../models/planner.model';
+import { GardenProject, PlannerTask } from '../models/planner.model';
+import { SeedMetadata } from '../models/seed.model';
 import { Observable } from 'rxjs';
-import { CreateProjectRequest } from './planner-api.types';
+import { CreatePlantingRequest, CreateProjectRequest, TaskQueryParams } from './planner-api.types';
 
 const API_BASE_URL = 'http://localhost:3000/api';
 
@@ -28,5 +29,46 @@ export class PlannerApiService {
 
   deleteProject(projectId: string): Observable<{ deleted: true }> {
     return this.http.delete<{ deleted: true }>(`${API_BASE_URL}/projects/${projectId}`);
+  }
+
+  getSeeds(): Observable<SeedMetadata[]> {
+    return this.http.get<SeedMetadata[]>(`${API_BASE_URL}/seeds`);
+  }
+
+  getProjectTasks(projectId: string, query?: TaskQueryParams): Observable<PlannerTask[]> {
+    return this.http.get<PlannerTask[]>(`${API_BASE_URL}/projects/${projectId}/tasks`, {
+      params: {
+        ...(query?.bedId ? { bedId: query.bedId } : {}),
+        ...(query?.completed !== undefined ? { completed: String(query.completed) } : {})
+      }
+    });
+  }
+
+  syncProjectTasks(projectId: string): Observable<{ synced: true }> {
+    return this.http.post<{ synced: true }>(`${API_BASE_URL}/projects/${projectId}/tasks/sync`, {});
+  }
+
+  createPlanting(projectId: string, payload: CreatePlantingRequest): Observable<unknown> {
+    return this.http.post(`${API_BASE_URL}/projects/${projectId}/plantings`, payload);
+  }
+
+  upsertPlanting(projectId: string, bedId: string, payload: CreatePlantingRequest): Observable<unknown> {
+    if (payload.zoneId) {
+      return this.http.put(`${API_BASE_URL}/projects/${projectId}/plantings/${bedId}/${payload.zoneId}`, payload);
+    }
+
+    return this.http.put(`${API_BASE_URL}/projects/${projectId}/plantings/${bedId}`, payload);
+  }
+
+  deletePlanting(projectId: string, bedId: string, zoneId?: string): Observable<{ deleted: true }> {
+    if (zoneId) {
+      return this.http.delete<{ deleted: true }>(`${API_BASE_URL}/projects/${projectId}/plantings/${bedId}/${zoneId}`);
+    }
+
+    return this.http.delete<{ deleted: true }>(`${API_BASE_URL}/projects/${projectId}/plantings/${bedId}`);
+  }
+
+  updateTaskStatus(projectId: string, taskId: string, completed: boolean): Observable<PlannerTask> {
+    return this.http.patch<PlannerTask>(`${API_BASE_URL}/projects/${projectId}/tasks/${taskId}`, { completed });
   }
 }

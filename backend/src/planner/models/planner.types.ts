@@ -52,11 +52,19 @@ export interface BedPlanting {
   expectedHarvestDateIso: string;
 }
 
+export interface BedZone {
+  id: string;
+  name: string;
+  rowIndex: number;
+  planting?: BedPlanting;
+}
+
 export interface BedLayout extends LayoutObjectBase {
   type: 'bed';
   sunExposure: SunExposure;
   soil: SoilCondition;
   rows: number;
+  zones?: BedZone[];
   planting?: BedPlanting;
   lastSeasonFamily?: string;
 }
@@ -81,5 +89,7 @@ export interface GardenProject {
   firstFrostDateIso: string;
   seeds: SeedMetadata[];
   objects: LayoutObject[];
+  completedTaskIds?: string[];
+  archivedAtIso?: string;
   updatedAtIso: string;
 }

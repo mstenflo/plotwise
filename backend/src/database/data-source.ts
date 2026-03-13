@@ -1,5 +1,7 @@
 import 'dotenv/config';
 import { DataSource } from 'typeorm';
+import { CalendarTaskEntity } from '../planner/entities/calendar-task.entity';
+import { PlantingEntity } from '../planner/entities/planting.entity';
 import { PlannerProjectEntity } from '../planner/entities/planner-project.entity';
 import { SeedCatalogEntity } from '../planner/entities/seed-catalog.entity';
 
@@ -30,7 +32,7 @@ export default new DataSource({
   password: hasDatabaseUrl ? undefined : (process.env.DB_PASSWORD ?? 'postgres'),
   database: hasDatabaseUrl ? undefined : (process.env.DB_NAME ?? 'plotwise'),
   ssl: resolveSslConfig(),
-  entities: [PlannerProjectEntity, SeedCatalogEntity],
+  entities: [PlannerProjectEntity, SeedCatalogEntity, PlantingEntity, CalendarTaskEntity],
   migrations: ['src/database/migrations/*{.ts,.js}'],
   synchronize: false,
 });
