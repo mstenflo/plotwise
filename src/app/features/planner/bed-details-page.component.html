@@ -57,6 +57,37 @@
           </div>
         </div>
       }
+
+      <div class="summary-block">
+        <div class="summary-block__header">
+          <h4 class="panel__title">Placements</h4>
+          @if (selectedPlacement()) {
+            <button type="button" class="btn btn-sm btn-outline-secondary" (click)="clearPlacementSelection()">
+              Clear Selection
+            </button>
+          }
+        </div>
+
+        @if (placements().length > 0) {
+          <div class="stack-list">
+            @for (placement of placements(); track placement.id) {
+              <button
+                type="button"
+                class="item-card item-card--button"
+                [class.item-card--selected]="selectedPlacementId() === placement.id"
+                (click)="selectPlacement(placement.id)"
+              >
+                <p class="item-card__title">{{ getPlacementLabel(placement) }}</p>
+                <p class="item-card__meta">
+                  {{ placement.placementMode }} • {{ placement.plantCount }} plants • planted {{ placement.plantedOnIso | date: 'MMM d, y' }}
+                </p>
+              </button>
+            }
+          </div>
+        } @else {
+          <p class="panel__subtitle">No placements yet. Draw a row strip, block, or polygon to start planting this bed.</p>
+        }
+      </div>
     </aside>
 
     <section class="bed-details-canvas-area">
@@ -78,10 +109,146 @@
     </section>
 
     <aside class="panel panel--right">
-      <h3 class="panel__title">Placement Inspector</h3>
       @if (error()) {
         <p class="error-text">{{ error() }}</p>
       }
+      @if (bed(); as currentBed) {
+        <section class="panel-section">
+          <h3 class="panel__title">Bed Properties</h3>
+          <p class="panel__subtitle">Edit growing conditions and planning defaults for this bed.</p>
+
+          <label class="geometry-editor__field geometry-editor__field--full">
+            <span>Bed Name</span>
+            <input
+              class="form-control form-control-sm"
+              [value]="currentBed.name"
+              [disabled]="saving()"
+              (change)="updateBedName($event)"
+            />
+          </label>
+
+          <label class="geometry-editor__field geometry-editor__field--full">
+            <span>Rows</span>
+            <input
+              class="form-control form-control-sm"
+              type="number"
+              min="1"
+              [value]="currentBed.rows"
+              [disabled]="saving()"
+              (change)="updateBedRows($event)"
+            />
+          </label>
+
+          <label class="geometry-editor__field geometry-editor__field--full">
+            <span>Sun Exposure</span>
+            <select
+              class="form-select form-select-sm"
+              [value]="currentBed.sunExposure"
+              [disabled]="saving()"
+              (change)="updateBedSunExposure($event)"
+            >
+              <option value="full-sun">Full Sun</option>
+              <option value="part-sun">Part Sun</option>
+              <option value="shade">Shade</option>
+            </select>
+          </label>
+
+          <label class="geometry-editor__field geometry-editor__field--full">
+            <span>Soil pH</span>
+            <input
+              class="form-control form-control-sm"
+              type="number"
+              step="0.1"
+              [value]="currentBed.soil.ph"
+              [disabled]="saving()"
+              (change)="updateBedSoil('ph', $event)"
+            />
+          </label>
+
+          <label class="geometry-editor__field geometry-editor__field--full">
+            <span>Drainage</span>
+            <select
+              class="form-select form-select-sm"
+              [value]="currentBed.soil.drainage"
+              [disabled]="saving()"
+              (change)="updateBedSoil('drainage', $event)"
+            >
+              <option value="poor">Poor</option>
+              <option value="moderate">Moderate</option>
+              <option value="good">Good</option>
+            </select>
+          </label>
+
+          <label class="geometry-editor__field geometry-editor__field--full">
+            <span>Organic Matter %</span>
+            <input
+              class="form-control form-control-sm"
+              type="number"
+              step="0.1"
+              [value]="currentBed.soil.organicMatterPercent"
+              [disabled]="saving()"
+              (change)="updateBedSoil('organicMatterPercent', $event)"
+            />
+          </label>
+
+          <label class="geometry-editor__field geometry-editor__field--full">
+            <span>Last Season Family</span>
+            <input
+              class="form-control form-control-sm"
+              [value]="currentBed.lastSeasonFamily ?? ''"
+              [disabled]="saving()"
+              (change)="updateBedLastSeasonFamily($event)"
+            />
+          </label>
+        </section>
+
+        <section class="panel-section">
+          <h3 class="panel__title">Bed Activity</h3>
+          @if (summary(); as bedSummary) {
+            <p class="panel__subtitle">
+              {{ bedSummary.placementsCount }} placements • {{ (bedSummary.occupiedAreaSqInches / 144) | number: '1.0-1' }} sq ft planted • {{ (bedSummary.openAreaSqInches / 144) | number: '1.0-1' }} sq ft open
+            </p>
+          }
+
+          @if (bedLevelTasks().length > 0) {
+            <div class="summary-block summary-block--flush">
+              <h4 class="panel__title">Bed Tasks</h4>
+              <div class="stack-list">
+                @for (task of bedLevelTasks(); track task.id) {
+                  <article class="item-card">
+                    <p class="item-card__title">{{ task.title }}</p>
+                    <p class="item-card__meta">{{ task.dueDateIso | date: 'MMM d, y' }} • {{ task.priority }}</p>
+                  </article>
+                }
+              </div>
+            </div>
+          }
+
+          @if (bedLevelWarnings().length > 0) {
+            <div class="summary-block summary-block--flush">
+              <h4 class="panel__title">Bed Warnings</h4>
+              <div class="stack-list">
+                @for (warning of bedLevelWarnings(); track warning.id) {
+                  <article class="item-card" [class.item-card--critical]="warning.severity === 'critical'">
+                    <p class="item-card__title">{{ warning.title }}</p>
+                    <p class="item-card__meta">{{ warning.detail }}</p>
+                  </article>
+                }
+              </div>
+            </div>
+          }
+        </section>
+      }
+
+      <section class="panel-section">
+        <div class="summary-block__header">
+          <h3 class="panel__title">Placement Inspector</h3>
+          @if (selectedPlacement()) {
+            <button type="button" class="btn btn-sm btn-outline-secondary" (click)="clearPlacementSelection()">
+              Clear Selection
+            </button>
+          }
+        </div>
       @if (selectedPlacement(); as placement) {
         <p class="panel__subtitle">{{ placement.placementMode }} placement</p>
 
@@ -143,17 +310,29 @@
           </div>
         </div>
 
-        @if (warnings().length > 0) {
+        @if (selectedPlacementTasks().length > 0) {
+          <div class="summary-block">
+            <h4 class="panel__title">Placement Tasks</h4>
+            <div class="stack-list">
+              @for (task of selectedPlacementTasks(); track task.id) {
+                <article class="item-card">
+                  <p class="item-card__title">{{ task.title }}</p>
+                  <p class="item-card__meta">{{ task.dueDateIso | date: 'MMM d, y' }} • {{ task.priority }}</p>
+                </article>
+              }
+            </div>
+          </div>
+        }
+
+        @if (selectedPlacementWarnings().length > 0) {
           <div class="summary-block">
             <h4 class="panel__title">Warnings</h4>
             <div class="stack-list">
-              @for (warning of warnings(); track warning.id) {
-                @if (!warning.placementId || warning.placementId === placement.id) {
-                  <article class="item-card" [class.item-card--critical]="warning.severity === 'critical'">
-                    <p class="item-card__title">{{ warning.title }}</p>
-                    <p class="item-card__meta">{{ warning.detail }}</p>
-                  </article>
-                }
+              @for (warning of selectedPlacementWarnings(); track warning.id) {
+                <article class="item-card" [class.item-card--critical]="warning.severity === 'critical'">
+                  <p class="item-card__title">{{ warning.title }}</p>
+                  <p class="item-card__meta">{{ warning.detail }}</p>
+                </article>
               }
             </div>
           </div>
@@ -165,17 +344,6 @@
       } @else {
         <p class="panel__subtitle">Select a placement or draw a new row strip, block, or polygon.</p>
       }
-
-      <section class="panel-section">
-        <h3 class="panel__title">Next Tasks</h3>
-        <div class="stack-list">
-          @for (task of tasks(); track task.id) {
-            <article class="item-card">
-              <p class="item-card__title">{{ task.title }}</p>
-              <p class="item-card__meta">{{ task.dueDateIso | date: 'MMM d, y' }} • {{ task.priority }}</p>
-            </article>
-          }
-        </div>
       </section>
     </aside>
   </main>

@@ -25,6 +25,7 @@ export interface CreatePlacementRequest {
 }
 
 export interface UpdateBedDetailsRequest {
+  name?: string;
   rows?: number;
   sunExposure?: 'full-sun' | 'part-sun' | 'shade';
   soil?: {

@@ -5,7 +5,7 @@ import { ActivatedRoute, Router } from '@angular/router';
 import { BedDetailsCanvasComponent } from './bed-details-canvas.component';
 import { PlannerStateService } from '../../core/services/planner-state.service';
 import { BedDetailsStateService } from '../../core/services/bed-details-state.service';
-import { BedEditorToolMode, BedPlacementMode, PlacementPoint } from '../../core/models/planner.model';
+import { BedEditorToolMode, BedPlacement, BedPlacementMode, PlacementPoint, PlannerTask, PlannerWarning } from '../../core/models/planner.model';
 import { formatInches } from '../../core/models/units.model';
 
 @Component({
@@ -40,6 +40,28 @@ export class BedDetailsPageComponent {
   protected readonly error = this.bedDetails.error;
   protected readonly currentProjectId = signal<string>('');
   protected readonly currentBedId = signal<string>('');
+  protected readonly bedLevelTasks = computed<PlannerTask[]>(() =>
+    this.tasks().filter((task) => !task.placementId),
+  );
+  protected readonly selectedPlacementTasks = computed<PlannerTask[]>(() => {
+    const selectedPlacement = this.selectedPlacement();
+    if (!selectedPlacement) {
+      return [];
+    }
+
+    return this.tasks().filter((task) => task.placementId === selectedPlacement.id);
+  });
+  protected readonly bedLevelWarnings = computed<PlannerWarning[]>(() =>
+    this.warnings().filter((warning) => !warning.placementId),
+  );
+  protected readonly selectedPlacementWarnings = computed<PlannerWarning[]>(() => {
+    const selectedPlacement = this.selectedPlacement();
+    if (!selectedPlacement) {
+      return [];
+    }
+
+    return this.warnings().filter((warning) => warning.placementId === selectedPlacement.id);
+  });
   protected readonly bedAreaSqFt = computed(() => {
     const bed = this.bed();
     if (!bed) {
@@ -163,6 +185,83 @@ export class BedDetailsPageComponent {
     });
   }
 
+  protected updateBedRows(event: Event): void {
+    const value = Number((event.target as HTMLInputElement).value);
+    if (Number.isNaN(value) || value < 1) {
+      return;
+    }
+
+    this.bedDetails.updateBedProperties(this.currentProjectId(), this.currentBedId(), {
+      rows: Math.round(value),
+    });
+  }
+
+  protected updateBedName(event: Event): void {
+    const value = (event.target as HTMLInputElement).value.trim();
+    if (!value) {
+      return;
+    }
+
+    this.bedDetails.updateBedProperties(this.currentProjectId(), this.currentBedId(), {
+      name: value,
+    });
+  }
+
+  protected updateBedSunExposure(event: Event): void {
+    const sunExposure = (event.target as HTMLSelectElement).value;
+    if (sunExposure !== 'full-sun' && sunExposure !== 'part-sun' && sunExposure !== 'shade') {
+      return;
+    }
+
+    this.bedDetails.updateBedProperties(this.currentProjectId(), this.currentBedId(), {
+      sunExposure,
+    });
+  }
+
+  protected updateBedSoil(
+    field: 'ph' | 'drainage' | 'organicMatterPercent',
+    event: Event,
+  ): void {
+    const bed = this.bed();
+    if (!bed) {
+      return;
+    }
+
+    if (field === 'drainage') {
+      const drainage = (event.target as HTMLSelectElement).value;
+      if (drainage !== 'poor' && drainage !== 'moderate' && drainage !== 'good') {
+        return;
+      }
+
+      this.bedDetails.updateBedProperties(this.currentProjectId(), this.currentBedId(), {
+        soil: {
+          ...bed.soil,
+          drainage,
+        },
+      });
+      return;
+    }
+
+    const value = Number((event.target as HTMLInputElement).value);
+    if (Number.isNaN(value)) {
+      return;
+    }
+
+    this.bedDetails.updateBedProperties(this.currentProjectId(), this.currentBedId(), {
+      soil: {
+        ...bed.soil,
+        [field]: value,
+      },
+    });
+  }
+
+  protected updateBedLastSeasonFamily(event: Event): void {
+    const value = (event.target as HTMLInputElement).value.trim();
+    this.bedDetails.updateBedProperties(this.currentProjectId(), this.currentBedId(), {
+      lastSeasonFamily: value,
+    });
+  }
+
   protected addVertex(): void {
     this.bedDetails.addVertexToSelectedPlacement(this.currentProjectId(), this.currentBedId());
   }
@@ -177,6 +276,10 @@ export class BedDetailsPageComponent {
 
   protected deleteSelectedPlacement(): void {
     this.bedDetails.deleteSelectedPlacement(this.currentProjectId(), this.currentBedId());
+  }
+
+  protected clearPlacementSelection(): void {
+    this.selectPlacement(null);
   }
 
   protected backToSite(): void {
@@ -197,5 +300,14 @@ export class BedDetailsPageComponent {
 
   protected getSeed(seedId: string) {
     return this.seeds().find((seed) => seed.id === seedId) ?? null;
+  }
+
+  protected getPlacementLabel(placement: BedPlacement): string {
+    const seed = this.getSeed(placement.seedId);
+    if (!seed) {
+      return 'Unknown plant';
+    }
+
+    return `${seed.name} ${seed.variety}`;
   }
 }

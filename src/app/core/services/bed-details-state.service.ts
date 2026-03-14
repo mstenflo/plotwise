@@ -9,6 +9,7 @@ import {
   PlacementPoint,
 } from '../models/planner.model';
 import { createRectPolygon, getPlacementAreaSqInches, normalizePlacementPoints } from '../models/placement.utils';
+import { UpdateBedDetailsRequest } from './planner-api.types';
 import { PlannerApiService } from './planner-api.service';
 import { PlannerStateService } from './planner-state.service';
 
@@ -75,6 +76,56 @@ export class BedDetailsStateService {
 
   setToolMode(mode: BedEditorToolMode): void {
     this.toolMode.set(mode);
+  }
+
+  updateBedProperties(
+    projectId: string,
+    bedId: string,
+    patch: UpdateBedDetailsRequest,
+  ): void {
+    const currentDetails = this.details();
+    const currentBed = currentDetails?.bed;
+    if (!currentDetails || !currentBed) {
+      return;
+    }
+
+    const nextBed: BedLayout = {
+      ...currentBed,
+      name: patch.name?.trim() ? patch.name.trim() : currentBed.name,
+      rows: patch.rows ?? currentBed.rows,
+      sunExposure: patch.sunExposure ?? currentBed.sunExposure,
+      soil: patch.soil
+        ? {
+            ph: patch.soil.ph,
+            drainage: patch.soil.drainage,
+            organicMatterPercent: patch.soil.organicMatterPercent,
+          }
+        : currentBed.soil,
+      lastSeasonFamily:
+        patch.lastSeasonFamily !== undefined
+          ? patch.lastSeasonFamily || undefined
+          : currentBed.lastSeasonFamily,
+    };
+
+    this.details.set({
+      ...currentDetails,
+      bed: nextBed,
+    });
+    this.saving.set(true);
+    this.error.set(null);
+
+    this.plannerApi.updateBedDetails(projectId, bedId, patch).subscribe({
+      next: (details) => {
+        this.details.set(details);
+        this.saving.set(false);
+        this.planner.syncProject(projectId);
+      },
+      error: () => {
+        this.saving.set(false);
+        this.loadBed(projectId, bedId);
+        this.error.set('Unable to save bed properties.');
+      },
+    });
   }
 
   selectPlacement(placementId: string | null, projectId?: string, bedId?: string): void {

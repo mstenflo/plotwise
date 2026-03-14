@@ -25,6 +25,11 @@ class SoilConditionDto {
 
 export class UpdateBedDetailsDto {
   @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  name?: string;
+
+  @IsOptional()
   @IsInt()
   @Min(1)
   rows?: number;

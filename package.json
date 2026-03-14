@@ -7,6 +7,7 @@
     "start:backend": "npm --prefix backend run migration:run && npm --prefix backend run start:dev",
     "start:frontend": "ng serve",
     "dev": "concurrently -k -n frontend,backend -c green,blue \"npm run start:frontend\" \"npm run start:backend\"",
+    "dev:rds": "bash scripts/start-rds-dev.sh",
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
     "test": "ng test"

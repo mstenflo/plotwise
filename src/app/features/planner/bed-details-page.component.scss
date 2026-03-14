@@ -115,6 +115,16 @@
   background: #f9fcf8;
 }
 
+.item-card--button {
+  width: 100%;
+  text-align: left;
+}
+
+.item-card--selected {
+  border-color: #458751;
+  background: #e7f7e4;
+}
+
 .item-card--compact {
   display: flex;
   justify-content: space-between;
@@ -142,6 +152,10 @@
   margin-top: 0.75rem;
   padding-top: 0.75rem;
   border-top: 1px solid #d8e7d4;
+}
+
+.summary-block--flush {
+  margin-top: 0.6rem;
 }
 
 .summary-block__header {

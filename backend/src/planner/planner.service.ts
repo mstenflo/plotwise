@@ -201,6 +201,7 @@ export class PlannerService implements OnModuleInit {
 
         return {
           ...object,
+          name: input.name?.trim() ? input.name.trim() : object.name,
           rows: input.rows ?? object.rows,
           sunExposure: input.sunExposure ?? object.sunExposure,
           soil: input.soil

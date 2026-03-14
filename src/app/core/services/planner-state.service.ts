@@ -585,6 +585,23 @@ export class PlannerStateService {
     return `${summary.currentPlants.length} crops • ${plantCount} plants • ${Math.round(summary.openAreaSqInches / 144)} sq ft open`;
   }
 
+  syncProject(projectId = this.activeProjectId()): void {
+    if (!projectId) {
+      return;
+    }
+
+    this.plannerApi.getProject(projectId).subscribe({
+      next: (project) => {
+        this.upsertProject(project);
+        this.persistProjectsToStorage();
+        this.refreshProjectResources(projectId);
+      },
+      error: () => {
+        this.refreshProjectResources(projectId);
+      },
+    });
+  }
+
   refreshProjectResources(projectId = this.activeProjectId()): void {
     if (!projectId) {
       return;
