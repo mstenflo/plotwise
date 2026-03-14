@@ -4,12 +4,20 @@ export type ProjectSeason = 'spring' | 'summer' | 'fall' | 'winter';
 export type LayoutObjectType = 'bed' | 'structure' | 'tree';
 export type WarningSeverity = 'info' | 'warning' | 'critical';
 export type CanvasToolMode = 'select' | 'pan' | 'draw-bed' | 'draw-polygon-bed';
+export type BedEditorToolMode = 'select' | 'row-strip' | 'block' | 'polygon';
 export type BedShapeType = 'rectangle' | 'polygon';
 export type ZoneShapeType = 'row-strip' | 'square' | 'polygon';
+export type BedPlacementMode = 'row-strip' | 'block' | 'polygon';
+export type PlannerTaskType = 'harvest' | 'succession' | 'maintenance';
 
 export interface ShapePoint {
   xPct: number;
   yPct: number;
+}
+
+export interface PlacementPoint {
+  xInches: number;
+  yInches: number;
 }
 
 export interface BedPolygonDraftPoint {
@@ -47,6 +55,22 @@ export interface BedPlanting {
   plantCount: number;
   expectedHarvestPounds: number;
   expectedHarvestDateIso: string;
+}
+
+export interface BedPlacement {
+  id: string;
+  projectId: string;
+  bedId: string;
+  seedId: string;
+  plantedOnIso: string;
+  expectedHarvestDateIso: string;
+  plantCount: number;
+  expectedHarvestPounds: number;
+  colorHex: string;
+  placementMode: BedPlacementMode;
+  polygonPoints: PlacementPoint[];
+  legacyZoneId?: string;
+  updatedAtIso: string;
 }
 
 export interface BedZone {
@@ -90,6 +114,8 @@ export interface PlannerTask {
   bedId: string;
   priority: WarningSeverity;
   completed: boolean;
+  placementId?: string;
+  taskType?: PlannerTaskType;
 }
 
 export interface PlannerWarning {
@@ -98,6 +124,7 @@ export interface PlannerWarning {
   detail: string;
   severity: WarningSeverity;
   bedId?: string;
+  placementId?: string;
 }
 
 export interface GardenProject {
@@ -114,8 +141,8 @@ export interface GardenProject {
   updatedAtIso: string;
 }
 
-export interface BedGeometryUpdate {
-  bedId: string;
+export interface LayoutObjectGeometryUpdate {
+  objectId: string;
   xInches: number;
   yInches: number;
   widthInches: number;
@@ -123,9 +150,59 @@ export interface BedGeometryUpdate {
   rotationDeg: number;
 }
 
+export interface BedGeometryUpdate extends Omit<LayoutObjectGeometryUpdate, 'objectId'> {
+  bedId: string;
+}
+
+export interface BedPolygonPointUpdate {
+  bedId: string;
+  pointIndex: number;
+  xPct: number;
+  yPct: number;
+}
+
+export interface ZonePolygonPointUpdate {
+  bedId: string;
+  zoneId: string;
+  pointIndex: number;
+  xPct: number;
+  yPct: number;
+}
+
 export interface BedDraftGeometry {
   xInches: number;
   yInches: number;
   widthInches: number;
   heightInches: number;
+}
+
+export interface BedSummaryPlant {
+  seedId: string;
+  name: string;
+  variety: string;
+  plantCount: number;
+  expectedHarvestPounds: number;
+  placementCount: number;
+  colorHex?: string;
+  nextHarvestDateIso?: string;
+}
+
+export interface BedSummary {
+  bedId: string;
+  bedName: string;
+  currentPlants: BedSummaryPlant[];
+  nextTasks: PlannerTask[];
+  placementsCount: number;
+  occupiedAreaSqInches: number;
+  openAreaSqInches: number;
+  totalAreaSqInches: number;
+  warnings: PlannerWarning[];
+}
+
+export interface BedDetails {
+  bed: BedLayout;
+  placements: BedPlacement[];
+  summary: BedSummary;
+  tasks: PlannerTask[];
+  warnings: PlannerWarning[];
 }

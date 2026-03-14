@@ -3,7 +3,18 @@ import { HttpClient } from '@angular/common/http';
 import { GardenProject, PlannerTask } from '../models/planner.model';
 import { SeedMetadata } from '../models/seed.model';
 import { Observable } from 'rxjs';
-import { CreatePlantingRequest, CreateProjectRequest, TaskQueryParams } from './planner-api.types';
+import {
+  BedDetailsResponse,
+  BedPlacementResponse,
+  BedSummaryResponse,
+  CreatePlacementRequest,
+  CreateProjectRequest,
+  HarvestPreviewRequest,
+  HarvestPreviewResponse,
+  PlannerTaskResponse,
+  TaskQueryParams,
+  UpdateBedDetailsRequest,
+} from './planner-api.types';
 
 const API_BASE_URL = 'http://localhost:3000/api';
 
@@ -35,10 +46,11 @@ export class PlannerApiService {
     return this.http.get<SeedMetadata[]>(`${API_BASE_URL}/seeds`);
   }
 
-  getProjectTasks(projectId: string, query?: TaskQueryParams): Observable<PlannerTask[]> {
+  getProjectTasks(projectId: string, query?: TaskQueryParams): Observable<PlannerTaskResponse[]> {
     return this.http.get<PlannerTask[]>(`${API_BASE_URL}/projects/${projectId}/tasks`, {
       params: {
         ...(query?.bedId ? { bedId: query.bedId } : {}),
+        ...(query?.placementId ? { placementId: query.placementId } : {}),
         ...(query?.completed !== undefined ? { completed: String(query.completed) } : {})
       }
     });
@@ -48,27 +60,58 @@ export class PlannerApiService {
     return this.http.post<{ synced: true }>(`${API_BASE_URL}/projects/${projectId}/tasks/sync`, {});
   }
 
-  createPlanting(projectId: string, payload: CreatePlantingRequest): Observable<unknown> {
-    return this.http.post(`${API_BASE_URL}/projects/${projectId}/plantings`, payload);
+  getBedSummaries(projectId: string): Observable<BedSummaryResponse[]> {
+    return this.http.get<BedSummaryResponse[]>(`${API_BASE_URL}/projects/${projectId}/beds/summary`);
   }
 
-  upsertPlanting(projectId: string, bedId: string, payload: CreatePlantingRequest): Observable<unknown> {
-    if (payload.zoneId) {
-      return this.http.put(`${API_BASE_URL}/projects/${projectId}/plantings/${bedId}/${payload.zoneId}`, payload);
-    }
-
-    return this.http.put(`${API_BASE_URL}/projects/${projectId}/plantings/${bedId}`, payload);
+  getBedDetails(projectId: string, bedId: string): Observable<BedDetailsResponse> {
+    return this.http.get<BedDetailsResponse>(`${API_BASE_URL}/projects/${projectId}/beds/${bedId}`);
   }
 
-  deletePlanting(projectId: string, bedId: string, zoneId?: string): Observable<{ deleted: true }> {
-    if (zoneId) {
-      return this.http.delete<{ deleted: true }>(`${API_BASE_URL}/projects/${projectId}/plantings/${bedId}/${zoneId}`);
-    }
-
-    return this.http.delete<{ deleted: true }>(`${API_BASE_URL}/projects/${projectId}/plantings/${bedId}`);
+  updateBedDetails(projectId: string, bedId: string, payload: UpdateBedDetailsRequest): Observable<BedDetailsResponse> {
+    return this.http.put<BedDetailsResponse>(
+      `${API_BASE_URL}/projects/${projectId}/beds/${bedId}`,
+      payload
+    );
   }
 
-  updateTaskStatus(projectId: string, taskId: string, completed: boolean): Observable<PlannerTask> {
-    return this.http.patch<PlannerTask>(`${API_BASE_URL}/projects/${projectId}/tasks/${taskId}`, { completed });
+  createPlacement(projectId: string, bedId: string, payload: CreatePlacementRequest): Observable<BedPlacementResponse> {
+    return this.http.post<BedPlacementResponse>(
+      `${API_BASE_URL}/projects/${projectId}/beds/${bedId}/placements`,
+      payload
+    );
+  }
+
+  updatePlacement(
+    projectId: string,
+    bedId: string,
+    placementId: string,
+    payload: CreatePlacementRequest
+  ): Observable<BedPlacementResponse> {
+    return this.http.put<BedPlacementResponse>(
+      `${API_BASE_URL}/projects/${projectId}/beds/${bedId}/placements/${placementId}`,
+      payload
+    );
+  }
+
+  deletePlacement(projectId: string, bedId: string, placementId: string): Observable<{ deleted: true }> {
+    return this.http.delete<{ deleted: true }>(
+      `${API_BASE_URL}/projects/${projectId}/beds/${bedId}/placements/${placementId}`
+    );
+  }
+
+  previewHarvest(
+    projectId: string,
+    bedId: string,
+    payload: HarvestPreviewRequest
+  ): Observable<HarvestPreviewResponse> {
+    return this.http.post<HarvestPreviewResponse>(
+      `${API_BASE_URL}/projects/${projectId}/beds/${bedId}/placements/preview-harvest`,
+      payload
+    );
+  }
+
+  updateTaskStatus(projectId: string, taskId: string, completed: boolean): Observable<PlannerTaskResponse> {
+    return this.http.patch<PlannerTaskResponse>(`${API_BASE_URL}/projects/${projectId}/tasks/${taskId}`, { completed });
   }
 }

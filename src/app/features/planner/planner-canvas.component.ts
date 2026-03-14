@@ -8,7 +8,7 @@ import {
   inject,
   input,
   output,
-  viewChild
+  viewChild,
 } from '@angular/core';
 import Konva from 'konva';
 import {
@@ -16,28 +16,44 @@ import {
   BedGeometryUpdate,
   BedLayout,
   BedPolygonDraftPoint,
-  BedZone,
-  CanvasToolMode
+  BedPolygonPointUpdate,
+  BedSummary,
+  CanvasToolMode,
+  LayoutObject,
+  LayoutObjectGeometryUpdate,
+  ShapePoint,
+  TreeLayout,
 } from '../../core/models/planner.model';
 
 const PIXELS_PER_INCH = 2;
 const GRID_STEP_INCHES = 12;
+const HANDLE_RADIUS = 7;
+
+interface PolygonBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
 @Component({
   selector: 'app-planner-canvas',
+  standalone: true,
   templateUrl: './planner-canvas.component.html',
   styleUrl: './planner-canvas.component.scss',
-  changeDetection: ChangeDetectionStrategy.OnPush
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class PlannerCanvasComponent implements AfterViewInit {
-  readonly beds = input.required<BedLayout[]>();
-  readonly selectedBedId = input<string | null>(null);
+  readonly objects = input.required<LayoutObject[]>();
+  readonly bedSummaries = input<BedSummary[]>([]);
+  readonly selectedObjectId = input<string | null>(null);
   readonly toolMode = input<CanvasToolMode>('select');
   readonly snapToGrid = input(true);
 
-  readonly bedSelected = output<string | null>();
-  readonly bedGeometryChanged = output<BedGeometryUpdate>();
-  readonly bedRenameRequested = output<{ bedId: string; currentName: string }>();
+  readonly objectSelected = output<string | null>();
+  readonly objectGeometryChanged = output<LayoutObjectGeometryUpdate>();
+  readonly bedPolygonPointChanged = output<BedPolygonPointUpdate>();
+  readonly objectRenameRequested = output<{ objectId: string; currentName: string }>();
   readonly bedDrawn = output<BedDraftGeometry>();
   readonly polygonBedDrawn = output<BedPolygonDraftPoint[]>();
 
@@ -47,18 +63,18 @@ export class PlannerCanvasComponent implements AfterViewInit {
 
   private stage?: Konva.Stage;
   private backgroundLayer?: Konva.Layer;
-  private bedsLayer?: Konva.Layer;
+  private objectsLayer?: Konva.Layer;
   private selectionTransformer?: Konva.Transformer;
   private drawingRect?: Konva.Rect;
   private drawingStart?: { x: number; y: number };
   private drawingPolygonLine?: Konva.Line;
   private drawingPolygonPoints: Array<{ x: number; y: number }> = [];
-  private bedMap = new Map<string, Konva.Shape>();
+  private objectMap = new Map<string, Konva.Shape>();
 
   constructor() {
     effect(() => {
-      this.renderBeds(this.beds(), this.toolMode());
-      this.attachTransformer(this.selectedBedId());
+      this.renderObjects(this.objects(), this.toolMode());
+      this.attachTransformer(this.selectedObjectId());
       this.updateInteractionMode(this.toolMode());
     });
   }
@@ -69,8 +85,8 @@ export class PlannerCanvasComponent implements AfterViewInit {
     }
 
     this.initStage();
-    this.renderBeds(this.beds(), this.toolMode());
-    this.attachTransformer(this.selectedBedId());
+    this.renderObjects(this.objects(), this.toolMode());
+    this.attachTransformer(this.selectedObjectId());
     this.updateInteractionMode(this.toolMode());
 
     const onResize = () => this.resizeStage();
@@ -85,22 +101,20 @@ export class PlannerCanvasComponent implements AfterViewInit {
       container,
       width: container.clientWidth,
       height: container.clientHeight,
-      draggable: false
+      draggable: false,
     });
 
     this.backgroundLayer = new Konva.Layer();
-    this.bedsLayer = new Konva.Layer();
+    this.objectsLayer = new Konva.Layer();
     this.selectionTransformer = new Konva.Transformer({
       rotateEnabled: true,
       keepRatio: false,
-      borderDash: [6, 4]
+      borderDash: [6, 4],
     });
 
-    this.bedsLayer.add(this.selectionTransformer);
-
+    this.objectsLayer.add(this.selectionTransformer);
     this.stage.add(this.backgroundLayer);
-    this.stage.add(this.bedsLayer);
-
+    this.stage.add(this.objectsLayer);
     this.drawGrid();
 
     this.stage.on('click tap', (event) => {
@@ -127,7 +141,7 @@ export class PlannerCanvasComponent implements AfterViewInit {
       }
 
       if (event.target === this.stage) {
-        this.bedSelected.emit(null);
+        this.objectSelected.emit(null);
       }
     });
 
@@ -140,7 +154,7 @@ export class PlannerCanvasComponent implements AfterViewInit {
     });
 
     this.stage.on('mousedown touchstart', (event) => {
-      if (this.toolMode() !== 'draw-bed' || !this.bedsLayer || !this.stage) {
+      if (this.toolMode() !== 'draw-bed' || !this.objectsLayer || !this.stage) {
         return;
       }
 
@@ -164,11 +178,11 @@ export class PlannerCanvasComponent implements AfterViewInit {
         stroke: '#2f6f3b',
         strokeWidth: 1.5,
         dash: [6, 4],
-        listening: false
+        listening: false,
       });
 
-      this.bedsLayer.add(this.drawingRect);
-      this.bedsLayer.batchDraw();
+      this.objectsLayer.add(this.drawingRect);
+      this.objectsLayer.batchDraw();
     });
 
     this.stage.on('mousemove touchmove', () => {
@@ -193,7 +207,7 @@ export class PlannerCanvasComponent implements AfterViewInit {
 
       this.drawingRect.position({ x, y });
       this.drawingRect.size({ width, height });
-      this.bedsLayer?.batchDraw();
+      this.objectsLayer?.batchDraw();
     });
 
     this.stage.on('mouseup touchend', () => {
@@ -205,17 +219,16 @@ export class PlannerCanvasComponent implements AfterViewInit {
         xInches: this.toInches(this.drawingRect.x()),
         yInches: this.toInches(this.drawingRect.y()),
         widthInches: this.toInches(this.drawingRect.width()),
-        heightInches: this.toInches(this.drawingRect.height())
+        heightInches: this.toInches(this.drawingRect.height()),
       };
 
       this.clearDrawingArtifacts();
-
       if (geometry.widthInches < 12 || geometry.heightInches < 12) {
         return;
       }
 
       this.bedDrawn.emit(geometry);
-      this.bedSelected.emit(null);
+      this.objectSelected.emit(null);
     });
 
     this.stage.on('wheel', (event) => {
@@ -231,18 +244,16 @@ export class PlannerCanvasComponent implements AfterViewInit {
       const scaleBy = 1.08;
       const newScale = direction > 0 ? oldScale * scaleBy : oldScale / scaleBy;
       const clampedScale = Math.min(3.5, Math.max(0.3, newScale));
-
       const mousePointTo = {
         x: (pointer.x - this.stage.x()) / oldScale,
-        y: (pointer.y - this.stage.y()) / oldScale
+        y: (pointer.y - this.stage.y()) / oldScale,
       };
 
       this.stage.scale({ x: clampedScale, y: clampedScale });
       this.stage.position({
         x: pointer.x - mousePointTo.x * clampedScale,
-        y: pointer.y - mousePointTo.y * clampedScale
+        y: pointer.y - mousePointTo.y * clampedScale,
       });
-
       this.stage.batchDraw();
     });
   }
@@ -267,15 +278,15 @@ export class PlannerCanvasComponent implements AfterViewInit {
     this.backgroundLayer.destroyChildren();
     const width = this.stage.width();
     const height = this.stage.height();
-    const step = 12 * PIXELS_PER_INCH;
+    const step = GRID_STEP_INCHES * PIXELS_PER_INCH;
 
     for (let x = 0; x < width; x += step) {
       this.backgroundLayer.add(
         new Konva.Line({
           points: [x, 0, x, height],
           stroke: '#d8ead6',
-          strokeWidth: x % (step * 4) === 0 ? 1.4 : 0.7
-        })
+          strokeWidth: x % (step * 4) === 0 ? 1.4 : 0.7,
+        }),
       );
     }
 
@@ -284,108 +295,248 @@ export class PlannerCanvasComponent implements AfterViewInit {
         new Konva.Line({
           points: [0, y, width, y],
           stroke: '#d8ead6',
-          strokeWidth: y % (step * 4) === 0 ? 1.4 : 0.7
-        })
+          strokeWidth: y % (step * 4) === 0 ? 1.4 : 0.7,
+        }),
       );
     }
 
     this.backgroundLayer.batchDraw();
   }
 
-  private renderBeds(beds: BedLayout[], mode: CanvasToolMode): void {
-    if (!this.bedsLayer || !this.selectionTransformer) {
+  private renderObjects(objects: LayoutObject[], mode: CanvasToolMode): void {
+    if (!this.objectsLayer || !this.selectionTransformer) {
       return;
     }
 
-    this.bedsLayer.destroyChildren();
-    this.bedsLayer.add(this.selectionTransformer);
+    this.objectsLayer.destroyChildren();
+    this.objectsLayer.add(this.selectionTransformer);
     if (this.drawingRect) {
-      this.bedsLayer.add(this.drawingRect);
+      this.objectsLayer.add(this.drawingRect);
     }
     if (this.drawingPolygonLine) {
-      this.bedsLayer.add(this.drawingPolygonLine);
+      this.objectsLayer.add(this.drawingPolygonLine);
     }
-    this.bedMap.clear();
+    this.objectMap.clear();
 
-    for (const bed of beds) {
-      const shape = this.createBedShape(bed, mode);
+    for (const object of objects) {
+      const shape = this.createObjectShape(object, mode);
+      shape.on('click tap', () => this.objectSelected.emit(object.id));
+      shape.on('dblclick dbltap', () =>
+        this.objectRenameRequested.emit({ objectId: object.id, currentName: object.name }),
+      );
+      shape.on('dragend', () => this.emitGeometry(shape, object));
+      shape.on('transformend', () => this.handleShapeTransform(shape, object));
 
-      shape.on('click tap', () => this.bedSelected.emit(bed.id));
-      shape.on('dblclick dbltap', () => {
-        this.bedRenameRequested.emit({ bedId: bed.id, currentName: bed.name });
-      });
-      shape.on('dragend', () => this.emitGeometry(shape, bed));
-      shape.on('transformend', () => this.handleShapeTransform(shape, bed));
-
-      this.bedsLayer.add(shape);
-      this.bedMap.set(bed.id, shape);
-
-      const zones = bed.zones && bed.zones.length > 0 ? [...bed.zones].sort((a, b) => a.rowIndex - b.rowIndex) : [];
-      const totalRows = zones.length > 0 ? zones.length : bed.rows;
-      this.drawZoneOverlays(bed, zones, totalRows);
+      this.objectsLayer.add(shape);
+      this.objectMap.set(object.id, shape);
 
       const label = new Konva.Text({
-        x: bed.xInches * PIXELS_PER_INCH + 6,
-        y: bed.yInches * PIXELS_PER_INCH + 6,
-        text:
-          zones.length > 0
-            ? `${bed.name} • ${zones.filter((zone) => !!zone.planting).length}/${zones.length} rows planted`
-            : bed.planting
-              ? `${bed.name} • planted`
-              : `${bed.name} • open`,
+        x: object.xInches * PIXELS_PER_INCH + 6,
+        y: object.yInches * PIXELS_PER_INCH + 6,
+        text: this.getObjectLabel(object),
         fontSize: 12,
         fill: '#204627',
-        listening: true
+        listening: true,
       });
+      label.on('click tap', () => this.objectSelected.emit(object.id));
+      label.on('dblclick dbltap', () =>
+        this.objectRenameRequested.emit({ objectId: object.id, currentName: object.name }),
+      );
+      this.objectsLayer.add(label);
 
-      label.on('click tap', () => this.bedSelected.emit(bed.id));
-      label.on('dblclick dbltap', () => {
-        this.bedRenameRequested.emit({ bedId: bed.id, currentName: bed.name });
-      });
-      this.bedsLayer.add(label);
+      if (
+        mode === 'select' &&
+        object.type === 'bed' &&
+        object.id === this.selectedObjectId() &&
+        object.shapeType === 'polygon'
+      ) {
+        this.drawBedPolygonHandles(object);
+      }
     }
 
-    this.bedsLayer.batchDraw();
+    this.objectsLayer.batchDraw();
+  }
+
+  private createObjectShape(object: LayoutObject, mode: CanvasToolMode): Konva.Shape {
+    if (object.type === 'bed' && object.shapeType === 'polygon' && Array.isArray(object.polygon) && object.polygon.length >= 3) {
+      return new Konva.Line({
+        points: object.polygon.flatMap((point) => [
+          point.xPct * object.widthInches * PIXELS_PER_INCH,
+          point.yPct * object.heightInches * PIXELS_PER_INCH,
+        ]),
+        x: object.xInches * PIXELS_PER_INCH,
+        y: object.yInches * PIXELS_PER_INCH,
+        closed: true,
+        fill: this.getBedFillColor(object),
+        stroke: '#2f6f3b',
+        strokeWidth: 2,
+        draggable: mode === 'select',
+        id: object.id,
+        name: 'layout-object',
+      });
+    }
+
+    if (object.type === 'tree') {
+      const tree = object as TreeLayout;
+      return new Konva.Ellipse({
+        x: (tree.xInches + tree.widthInches / 2) * PIXELS_PER_INCH,
+        y: (tree.yInches + tree.heightInches / 2) * PIXELS_PER_INCH,
+        radiusX: (tree.widthInches / 2) * PIXELS_PER_INCH,
+        radiusY: (tree.heightInches / 2) * PIXELS_PER_INCH,
+        fill: 'rgba(115, 160, 83, 0.35)',
+        stroke: '#426e2c',
+        strokeWidth: 2,
+        draggable: mode === 'select',
+        id: tree.id,
+        name: 'layout-object',
+      });
+    }
+
+    return new Konva.Rect({
+      x: object.xInches * PIXELS_PER_INCH,
+      y: object.yInches * PIXELS_PER_INCH,
+      width: object.widthInches * PIXELS_PER_INCH,
+      height: object.heightInches * PIXELS_PER_INCH,
+      rotation: object.rotationDeg,
+      fill: object.type === 'bed' ? this.getBedFillColor(object) : 'rgba(164, 129, 90, 0.35)',
+      stroke: object.type === 'bed' ? '#2f6f3b' : '#6f4f2f',
+      strokeWidth: 2,
+      cornerRadius: object.type === 'structure' ? 4 : 8,
+      draggable: mode === 'select',
+      id: object.id,
+      name: 'layout-object',
+    });
+  }
+
+  private getObjectLabel(object: LayoutObject): string {
+    if (object.type !== 'bed') {
+      return object.name;
+    }
+
+    const summary = this.bedSummaries().find((entry) => entry.bedId === object.id);
+    if (!summary || summary.currentPlants.length === 0) {
+      return `${object.name} • open`;
+    }
+
+    return `${object.name} • ${summary.currentPlants.length} crops`;
+  }
+
+  private getBedFillColor(bed: BedLayout): string {
+    const summary = this.bedSummaries().find((entry) => entry.bedId === bed.id);
+    if (!summary || summary.currentPlants.length === 0) {
+      return '#d6ddd2';
+    }
+
+    const openRatio = summary.totalAreaSqInches > 0 ? summary.openAreaSqInches / summary.totalAreaSqInches : 0;
+    if (openRatio <= 0.1) {
+      return '#7ab77d';
+    }
+
+    if (openRatio <= 0.4) {
+      return '#9ccf96';
+    }
+
+    return '#c4df9b';
+  }
+
+  private drawBedPolygonHandles(bed: BedLayout): void {
+    if (!this.objectsLayer || !Array.isArray(bed.polygon) || bed.polygon.length < 3) {
+      return;
+    }
+
+    const shape = this.objectMap.get(bed.id);
+    if (!(shape instanceof Konva.Line)) {
+      return;
+    }
+
+    const bounds = {
+      x: bed.xInches * PIXELS_PER_INCH,
+      y: bed.yInches * PIXELS_PER_INCH,
+      width: bed.widthInches * PIXELS_PER_INCH,
+      height: bed.heightInches * PIXELS_PER_INCH,
+    };
+
+    bed.polygon.forEach((point, pointIndex) => {
+      const handle = new Konva.Circle({
+        x: bounds.x + point.xPct * bounds.width,
+        y: bounds.y + point.yPct * bounds.height,
+        radius: HANDLE_RADIUS,
+        fill: '#fffaf4',
+        stroke: '#2f6f3b',
+        strokeWidth: 2,
+        draggable: true,
+      });
+
+      handle.on('mousedown touchstart click tap dragstart', (event) => {
+        event.cancelBubble = true;
+        this.objectSelected.emit(bed.id);
+      });
+      handle.dragBoundFunc((position) => this.constrainHandlePosition(position, bounds));
+      handle.on('dragmove', () => {
+        this.syncPolygonShapePoint(shape, pointIndex, { x: handle.x(), y: handle.y() });
+      });
+      handle.on('dragend', () => {
+        const nextPoint = this.toRelativePoint({ x: handle.x(), y: handle.y() }, bounds);
+        this.bedPolygonPointChanged.emit({
+          bedId: bed.id,
+          pointIndex,
+          xPct: nextPoint.xPct,
+          yPct: nextPoint.yPct,
+        });
+      });
+
+      this.objectsLayer?.add(handle);
+    });
   }
 
   private attachTransformer(selectedId: string | null): void {
-    if (!this.selectionTransformer || !this.bedsLayer) {
+    if (!this.selectionTransformer || !this.objectsLayer) {
       return;
     }
 
-    if (this.toolMode() !== 'select') {
+    if (this.toolMode() !== 'select' || !selectedId) {
       this.selectionTransformer.nodes([]);
-      this.bedsLayer.batchDraw();
+      this.objectsLayer.batchDraw();
       return;
     }
 
-    if (!selectedId) {
-      this.selectionTransformer.nodes([]);
-      this.bedsLayer.batchDraw();
-      return;
-    }
-
-    const selectedShape = this.bedMap.get(selectedId);
-    this.selectionTransformer.nodes(selectedShape ? [selectedShape] : []);
-    this.bedsLayer.batchDraw();
+    const shape = this.objectMap.get(selectedId);
+    this.selectionTransformer.nodes(shape ? [shape] : []);
+    this.objectsLayer.batchDraw();
   }
 
-  private emitGeometry(shape: Konva.Shape, bed: BedLayout): void {
+  private emitGeometry(shape: Konva.Shape, object: LayoutObject): void {
     if (shape instanceof Konva.Rect) {
       if (this.snapToGrid()) {
         shape.position({
           x: this.toPixels(this.snapInches(this.toInches(shape.x()))),
-          y: this.toPixels(this.snapInches(this.toInches(shape.y())))
+          y: this.toPixels(this.snapInches(this.toInches(shape.y()))),
         });
       }
 
-      this.bedGeometryChanged.emit({
-        bedId: shape.id(),
+      this.objectGeometryChanged.emit({
+        objectId: object.id,
         xInches: this.toInches(shape.x()),
         yInches: this.toInches(shape.y()),
         widthInches: this.toInches(shape.width()),
         heightInches: this.toInches(shape.height()),
-        rotationDeg: shape.rotation()
+        rotationDeg: shape.rotation(),
+      });
+      return;
+    }
+
+    if (shape instanceof Konva.Ellipse) {
+      const widthInches = this.toInches(shape.radiusX() * 2);
+      const heightInches = this.toInches(shape.radiusY() * 2);
+      const xInches = this.toInches(shape.x() - shape.radiusX());
+      const yInches = this.toInches(shape.y() - shape.radiusY());
+      this.objectGeometryChanged.emit({
+        objectId: object.id,
+        xInches,
+        yInches,
+        widthInches,
+        heightInches,
+        rotationDeg: shape.rotation(),
       });
       return;
     }
@@ -393,27 +544,57 @@ export class PlannerCanvasComponent implements AfterViewInit {
     if (shape instanceof Konva.Line) {
       const points = shape.points();
       const absolute: Array<{ x: number; y: number }> = [];
-
-      for (let i = 0; i < points.length; i += 2) {
-        absolute.push({ x: points[i] + shape.x(), y: points[i + 1] + shape.y() });
+      for (let index = 0; index < points.length; index += 2) {
+        absolute.push({ x: points[index] + shape.x(), y: points[index + 1] + shape.y() });
       }
 
       const xValues = absolute.map((point) => point.x);
       const yValues = absolute.map((point) => point.y);
-
       const minX = Math.min(...xValues);
       const minY = Math.min(...yValues);
       const maxX = Math.max(...xValues);
       const maxY = Math.max(...yValues);
-
-      this.bedGeometryChanged.emit({
-        bedId: bed.id,
+      this.objectGeometryChanged.emit({
+        objectId: object.id,
         xInches: this.toInches(minX),
         yInches: this.toInches(minY),
         widthInches: Math.max(12, this.toInches(maxX - minX)),
         heightInches: Math.max(12, this.toInches(maxY - minY)),
-        rotationDeg: 0
+        rotationDeg: 0,
       });
+    }
+  }
+
+  private handleShapeTransform(shape: Konva.Shape, object: LayoutObject): void {
+    if (shape instanceof Konva.Rect) {
+      const updatedWidth = Math.max(12 * PIXELS_PER_INCH, shape.width() * shape.scaleX());
+      const updatedHeight = Math.max(12 * PIXELS_PER_INCH, shape.height() * shape.scaleY());
+      shape.width(updatedWidth);
+      shape.height(updatedHeight);
+      shape.scale({ x: 1, y: 1 });
+      if (this.snapToGrid()) {
+        shape.width(this.toPixels(this.snapInches(this.toInches(shape.width()))));
+        shape.height(this.toPixels(this.snapInches(this.toInches(shape.height()))));
+      }
+      this.emitGeometry(shape, object);
+      return;
+    }
+
+    if (shape instanceof Konva.Ellipse) {
+      shape.radiusX(Math.max(6 * PIXELS_PER_INCH, shape.radiusX() * shape.scaleX()));
+      shape.radiusY(Math.max(6 * PIXELS_PER_INCH, shape.radiusY() * shape.scaleY()));
+      shape.scale({ x: 1, y: 1 });
+      this.emitGeometry(shape, object);
+      return;
+    }
+
+    if (shape instanceof Konva.Line) {
+      const scaledPoints = shape.points().map((value, index) =>
+        index % 2 === 0 ? value * shape.scaleX() : value * shape.scaleY(),
+      );
+      shape.points(scaledPoints);
+      shape.scale({ x: 1, y: 1 });
+      this.emitGeometry(shape, object);
     }
   }
 
@@ -442,7 +623,7 @@ export class PlannerCanvasComponent implements AfterViewInit {
 
     return {
       x: this.snapToGrid() ? this.toPixels(this.snapInches(this.toInches(x))) : x,
-      y: this.snapToGrid() ? this.toPixels(this.snapInches(this.toInches(y))) : y
+      y: this.snapToGrid() ? this.toPixels(this.snapInches(this.toInches(y))) : y,
     };
   }
 
@@ -467,171 +648,8 @@ export class PlannerCanvasComponent implements AfterViewInit {
     return Math.round(valueInches / GRID_STEP_INCHES) * GRID_STEP_INCHES;
   }
 
-  private getBedFillColor(bed: BedLayout): string {
-    const plantings = bed.zones?.filter((zone) => !!zone.planting).map((zone) => zone.planting!) ?? [];
-    const planting = plantings[0] ?? bed.planting;
-
-    if (!planting) {
-      return '#d6ddd2';
-    }
-
-    const now = Date.now();
-    const harvestAt = new Date(planting.expectedHarvestDateIso).getTime();
-    const daysUntilHarvest = Math.ceil((harvestAt - now) / (1000 * 60 * 60 * 24));
-
-    if (daysUntilHarvest <= 0) {
-      return '#e18f8f';
-    }
-
-    if (daysUntilHarvest <= 10) {
-      return '#f0c276';
-    }
-
-    return '#9ccf96';
-  }
-
-  private createBedShape(bed: BedLayout, mode: CanvasToolMode): Konva.Shape {
-    if (bed.shapeType === 'polygon' && Array.isArray(bed.polygon) && bed.polygon.length >= 3) {
-      return new Konva.Line({
-        points: bed.polygon.flatMap((point) => [
-          point.xPct * bed.widthInches * PIXELS_PER_INCH,
-          point.yPct * bed.heightInches * PIXELS_PER_INCH
-        ]),
-        x: bed.xInches * PIXELS_PER_INCH,
-        y: bed.yInches * PIXELS_PER_INCH,
-        closed: true,
-        fill: this.getBedFillColor(bed),
-        stroke: '#2f6f3b',
-        strokeWidth: 2,
-        draggable: mode === 'select',
-        id: bed.id,
-        name: 'bed-shape'
-      });
-    }
-
-    return new Konva.Rect({
-      x: bed.xInches * PIXELS_PER_INCH,
-      y: bed.yInches * PIXELS_PER_INCH,
-      width: bed.widthInches * PIXELS_PER_INCH,
-      height: bed.heightInches * PIXELS_PER_INCH,
-      rotation: bed.rotationDeg,
-      fill: this.getBedFillColor(bed),
-      stroke: '#2f6f3b',
-      strokeWidth: 2,
-      cornerRadius: 4,
-      draggable: mode === 'select',
-      id: bed.id,
-      name: 'bed-shape'
-    });
-  }
-
-  private handleShapeTransform(shape: Konva.Shape, bed: BedLayout): void {
-    if (shape instanceof Konva.Rect) {
-      const updatedWidth = Math.max(12 * PIXELS_PER_INCH, shape.width() * shape.scaleX());
-      const updatedHeight = Math.max(12 * PIXELS_PER_INCH, shape.height() * shape.scaleY());
-      shape.width(updatedWidth);
-      shape.height(updatedHeight);
-      shape.scale({ x: 1, y: 1 });
-      if (this.snapToGrid()) {
-        shape.width(this.toPixels(this.snapInches(this.toInches(shape.width()))));
-        shape.height(this.toPixels(this.snapInches(this.toInches(shape.height()))));
-      }
-      this.emitGeometry(shape, bed);
-      return;
-    }
-
-    if (shape instanceof Konva.Line) {
-      const scaledPoints = shape.points().map((value, index) =>
-        index % 2 === 0 ? value * shape.scaleX() : value * shape.scaleY()
-      );
-      shape.points(scaledPoints);
-      shape.scale({ x: 1, y: 1 });
-      this.emitGeometry(shape, bed);
-    }
-  }
-
-  private drawZoneOverlays(bed: BedLayout, zones: BedZone[], totalRows: number): void {
-    if (!this.bedsLayer) {
-      return;
-    }
-
-    const bedX = bed.xInches * PIXELS_PER_INCH;
-    const bedY = bed.yInches * PIXELS_PER_INCH;
-    const bedWidth = bed.widthInches * PIXELS_PER_INCH;
-    const bedHeight = bed.heightInches * PIXELS_PER_INCH;
-    const rowHeight = bedHeight / Math.max(1, totalRows);
-
-    const renderZones = zones.length > 0 ? zones : [];
-    for (const zone of renderZones) {
-      if (!zone.planting) {
-        continue;
-      }
-
-      const fill = this.toAlphaFill(zone.colorHex ?? '#7ab77d', 0.33);
-      const shapeType = zone.shapeType ?? 'row-strip';
-
-      if (shapeType === 'square') {
-        const rect = zone.rect ?? { xPct: 0.08, yPct: 0.1, widthPct: 0.32, heightPct: 0.8 };
-        this.bedsLayer.add(
-          new Konva.Rect({
-            x: bedX + rect.xPct * bedWidth,
-            y: bedY + rect.yPct * bedHeight,
-            width: rect.widthPct * bedWidth,
-            height: rect.heightPct * bedHeight,
-            fill,
-            listening: false
-          })
-        );
-        continue;
-      }
-
-      if (shapeType === 'polygon' && zone.polygon && zone.polygon.length >= 3) {
-        this.bedsLayer.add(
-          new Konva.Line({
-            x: bedX,
-            y: bedY,
-            points: zone.polygon.flatMap((point) => [point.xPct * bedWidth, point.yPct * bedHeight]),
-            closed: true,
-            fill,
-            stroke: zone.colorHex ?? '#7ab77d',
-            strokeWidth: 1,
-            listening: false
-          })
-        );
-        continue;
-      }
-
-      this.bedsLayer.add(
-        new Konva.Rect({
-          x: bedX,
-          y: bedY + rowHeight * zone.rowIndex,
-          width: bedWidth,
-          height: rowHeight,
-          fill,
-          listening: false
-        })
-      );
-    }
-
-    if (totalRows > 1) {
-      for (let i = 1; i < totalRows; i++) {
-        this.bedsLayer.add(
-          new Konva.Line({
-            points: [0, rowHeight * i, bedWidth, rowHeight * i],
-            x: bedX,
-            y: bedY,
-            stroke: '#2f6f3b',
-            strokeWidth: 1,
-            opacity: 0.45,
-            listening: false
-          })
-        );
-      }
-    }
-  }
-
   private addPolygonDraftPoint(point: { x: number; y: number }): void {
-    if (!this.bedsLayer) {
+    if (!this.objectsLayer) {
       return;
     }
 
@@ -645,14 +663,14 @@ export class PlannerCanvasComponent implements AfterViewInit {
         stroke: '#2f6f3b',
         strokeWidth: 2,
         dash: [6, 4],
-        listening: false
+        listening: false,
       });
-      this.bedsLayer.add(this.drawingPolygonLine);
+      this.objectsLayer.add(this.drawingPolygonLine);
     } else {
       this.drawingPolygonLine.points(flat);
     }
 
-    this.bedsLayer.batchDraw();
+    this.objectsLayer.batchDraw();
   }
 
   private updatePolygonDraftPreview(): void {
@@ -665,35 +683,74 @@ export class PlannerCanvasComponent implements AfterViewInit {
       return;
     }
 
-    this.drawingPolygonLine.points([...this.drawingPolygonPoints, pointer].flatMap((entry) => [entry.x, entry.y]));
-    this.bedsLayer?.batchDraw();
+    this.drawingPolygonLine.points([
+      ...this.drawingPolygonPoints,
+      pointer,
+    ].flatMap((entry) => [entry.x, entry.y]));
+    this.objectsLayer?.batchDraw();
   }
 
   private finishPolygonDraft(): void {
     if (this.drawingPolygonPoints.length < 3) {
       this.clearDrawingArtifacts();
-      this.bedsLayer?.batchDraw();
+      this.objectsLayer?.batchDraw();
       return;
     }
 
     this.polygonBedDrawn.emit(
       this.drawingPolygonPoints.map((point) => ({
         xInches: this.toInches(point.x),
-        yInches: this.toInches(point.y)
-      }))
+        yInches: this.toInches(point.y),
+      })),
     );
-
     this.clearDrawingArtifacts();
-    this.bedsLayer?.batchDraw();
+    this.objectsLayer?.batchDraw();
   }
 
-  private toAlphaFill(colorHex: string, alpha: number): string {
-    const value = colorHex.replace('#', '');
-    const normalized = value.length === 3 ? value.split('').map((char) => `${char}${char}`).join('') : value;
-    const r = Number.parseInt(normalized.slice(0, 2), 16);
-    const g = Number.parseInt(normalized.slice(2, 4), 16);
-    const b = Number.parseInt(normalized.slice(4, 6), 16);
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  private syncPolygonShapePoint(
+    shape: Konva.Line,
+    pointIndex: number,
+    position: { x: number; y: number },
+  ): void {
+    const nextPoints = [...shape.points()];
+    nextPoints[pointIndex * 2] = position.x - shape.x();
+    nextPoints[pointIndex * 2 + 1] = position.y - shape.y();
+    shape.points(nextPoints);
+    this.objectsLayer?.batchDraw();
+  }
+
+  private constrainHandlePosition(
+    position: { x: number; y: number },
+    bounds: PolygonBounds,
+  ): { x: number; y: number } {
+    const minX = bounds.x;
+    const maxX = bounds.x + bounds.width;
+    const minY = bounds.y;
+    const maxY = bounds.y + bounds.height;
+
+    let x = this.clamp(position.x, minX, maxX);
+    let y = this.clamp(position.y, minY, maxY);
+
+    if (this.snapToGrid()) {
+      x = this.clamp(this.toPixels(this.snapInches(this.toInches(x))), minX, maxX);
+      y = this.clamp(this.toPixels(this.snapInches(this.toInches(y))), minY, maxY);
+    }
+
+    return { x, y };
+  }
+
+  private toRelativePoint(
+    position: { x: number; y: number },
+    bounds: PolygonBounds,
+  ): ShapePoint {
+    return {
+      xPct: this.clamp((position.x - bounds.x) / Math.max(1, bounds.width), 0, 1),
+      yPct: this.clamp((position.y - bounds.y) / Math.max(1, bounds.height), 0, 1),
+    };
+  }
+
+  private clamp(value: number, min: number, max: number): number {
+    return Math.min(max, Math.max(min, value));
   }
 
   private isCanvasSupported(): boolean {

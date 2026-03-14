@@ -11,9 +11,6 @@ export class CalendarTaskEntity {
   @Column({ type: 'varchar', length: 64 })
   bedId!: string;
 
-  @Column({ type: 'varchar', length: 64, nullable: true })
-  zoneId?: string;
-
   @Column({ type: 'varchar', length: 32 })
   priority!: 'info' | 'warning' | 'critical';
 
@@ -28,6 +25,9 @@ export class CalendarTaskEntity {
 
   @Column({ type: 'varchar', length: 64, nullable: true })
   plantingId?: string;
+
+  @Column({ type: 'varchar', length: 24, nullable: true })
+  taskType?: 'harvest' | 'succession' | 'maintenance';
 
   @Column({ type: 'timestamptz' })
   updatedAtIso!: string;

@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
 import request from 'supertest';
 import { AppModule } from './../src/app.module';
 
@@ -20,6 +20,13 @@ describe('Backend API (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        transform: true,
+        forbidNonWhitelisted: true,
+      }),
+    );
     await app.init();
   });
 
@@ -102,11 +109,11 @@ describe('Backend API (e2e)', () => {
     createdProjectId = undefined;
   });
 
-  it('supports planning resources sync and task filtering', async () => {
+  it('supports placement-backed bed details and summary APIs', async () => {
     const createResponse = await request(app.getHttpServer())
       .post('/api/projects')
       .send({
-        name: 'Planning API Test Project',
+        name: 'Placement API Test Project',
         season: 'spring',
         climateZone: '7a',
         lastFrostDateIso: '2026-04-15T00:00:00.000Z',
@@ -154,16 +161,25 @@ describe('Backend API (e2e)', () => {
             rows: 3,
             sunExposure: 'full-sun',
             soil: { ph: 6.5, drainage: 'good', organicMatterPercent: 4 },
-            planting: {
-              seedId: 'seed-test',
-              plantedOnIso: '2026-03-12T00:00:00.000Z',
-              plantCount: 8,
-              expectedHarvestPounds: 8,
-              expectedHarvestDateIso: '2026-04-11T00:00:00.000Z',
-            },
+            zones: [
+              {
+                id: 'zone-1',
+                name: 'Row 1',
+                rowIndex: 0,
+                shapeType: 'row-strip',
+                colorHex: '#7ab77d',
+                planting: {
+                  seedId: 'seed-test',
+                  plantedOnIso: '2026-03-12T00:00:00.000Z',
+                  plantCount: 8,
+                  expectedHarvestPounds: 8,
+                  expectedHarvestDateIso: '2026-04-11T00:00:00.000Z',
+                },
+              },
+            ],
           },
         ],
-        completedTaskIds: ['task-harvest-bed-it'],
+        completedTaskIds: ['task-harvest-bed-it-zone-1'],
       };
 
       await request(app.getHttpServer())
@@ -171,68 +187,83 @@ describe('Backend API (e2e)', () => {
         .send(updatedProject)
         .expect(200);
 
-      const plantingsResponse = await request(app.getHttpServer())
-        .get(`/api/projects/${projectId}/plantings`)
+      const summariesResponse = await request(app.getHttpServer())
+        .get(`/api/projects/${projectId}/beds/summary`)
         .expect(200);
 
-      expect(Array.isArray(plantingsResponse.body)).toBe(true);
-      expect(plantingsResponse.body.length).toBe(1);
+      expect(Array.isArray(summariesResponse.body)).toBe(true);
+      expect(summariesResponse.body[0].bedId).toBe('bed-it');
+      expect(summariesResponse.body[0].currentPlants.length).toBe(1);
 
-      const tasksResponse = await request(app.getHttpServer())
-        .get(`/api/projects/${projectId}/tasks`)
+      const bedDetails = await request(app.getHttpServer())
+        .get(`/api/projects/${projectId}/beds/bed-it`)
         .expect(200);
 
-      expect(Array.isArray(tasksResponse.body)).toBe(true);
-      expect(tasksResponse.body.length).toBeGreaterThan(0);
-      const harvestTask = tasksResponse.body.find(
-        (task: { id: string }) => task.id === 'task-harvest-bed-it',
-      );
-      expect(harvestTask).toBeDefined();
+      expect(bedDetails.body.bed.id).toBe('bed-it');
+      expect(Array.isArray(bedDetails.body.placements)).toBe(true);
+      expect(bedDetails.body.placements.length).toBeGreaterThan(0);
+      const migratedPlacementId = bedDetails.body.placements[0].id as string;
 
-      await request(app.getHttpServer())
-        .patch(`/api/projects/${projectId}/tasks/task-harvest-bed-it`)
-        .send({ completed: false })
-        .expect(200)
-        .expect((response) => {
-          expect(response.body.completed).toBe(false);
-        });
-
-      const openTasks = await request(app.getHttpServer())
-        .get(`/api/projects/${projectId}/tasks?completed=false`)
-        .expect(200);
-      expect(openTasks.body.some((task: { id: string }) => task.id === 'task-harvest-bed-it')).toBe(true);
-
-      const doneTasks = await request(app.getHttpServer())
-        .get(`/api/projects/${projectId}/tasks?completed=true`)
-        .expect(200);
-      expect(doneTasks.body.some((task: { id: string }) => task.id === 'task-harvest-bed-it')).toBe(false);
-
-      await request(app.getHttpServer())
-        .post(`/api/projects/${projectId}/tasks/sync`)
-        .expect(201)
-        .expect({ synced: true });
-
-      const upsertZonePlanting = await request(app.getHttpServer())
-        .put(`/api/projects/${projectId}/plantings/bed-it/zone-1`)
+      const previewHarvest = await request(app.getHttpServer())
+        .post(`/api/projects/${projectId}/beds/bed-it/placements/preview-harvest`)
         .send({
           seedId: 'seed-test',
           plantedOnIso: '2026-03-18T00:00:00.000Z',
           plantCount: 6,
-          expectedHarvestPounds: 6,
-          expectedHarvestDateIso: '2026-04-18T00:00:00.000Z',
-          zoneId: 'zone-1',
         })
-        .expect(200);
+        .expect(201);
 
-      expect(upsertZonePlanting.body.zoneId).toBe('zone-1');
+      expect(previewHarvest.body.expectedHarvestDateIso).toBeDefined();
+      expect(previewHarvest.body.expectedHarvestPounds).toBe(6);
 
-      const zoneTasks = await request(app.getHttpServer())
-        .get(`/api/projects/${projectId}/tasks?zoneId=zone-1`)
-        .expect(200);
-      expect(Array.isArray(zoneTasks.body)).toBe(true);
+      const createdPlacement = await request(app.getHttpServer())
+        .post(`/api/projects/${projectId}/beds/bed-it/placements`)
+        .send({
+          seedId: 'seed-test',
+          plantedOnIso: '2026-03-18T00:00:00.000Z',
+          plantCount: 6,
+          colorHex: '#58a680',
+          placementMode: 'block',
+          polygonPoints: [
+            { xInches: 10, yInches: 10 },
+            { xInches: 22, yInches: 10 },
+            { xInches: 22, yInches: 18 },
+            { xInches: 10, yInches: 18 },
+          ],
+        })
+        .expect(201);
+
+      expect(createdPlacement.body.expectedHarvestDateIso).toBeDefined();
 
       await request(app.getHttpServer())
-        .delete(`/api/projects/${projectId}/plantings/bed-it/zone-1`)
+        .put(`/api/projects/${projectId}/beds/bed-it/placements/${createdPlacement.body.id}`)
+        .send({
+          seedId: 'seed-test',
+          plantedOnIso: '2026-03-20T00:00:00.000Z',
+          plantCount: 4,
+          colorHex: '#5e9f60',
+          placementMode: 'polygon',
+          polygonPoints: [
+            { xInches: 12, yInches: 10 },
+            { xInches: 20, yInches: 10 },
+            { xInches: 22, yInches: 18 },
+            { xInches: 14, yInches: 20 },
+          ],
+        })
+        .expect(200)
+        .expect((response) => {
+          expect(response.body.plantCount).toBe(4);
+        });
+
+      const tasksResponse = await request(app.getHttpServer())
+        .get(`/api/projects/${projectId}/tasks?bedId=bed-it`)
+        .expect(200);
+
+      expect(Array.isArray(tasksResponse.body)).toBe(true);
+      expect(tasksResponse.body.some((task: { placementId?: string }) => task.placementId === migratedPlacementId)).toBe(true);
+
+      await request(app.getHttpServer())
+        .delete(`/api/projects/${projectId}/beds/bed-it/placements/${createdPlacement.body.id}`)
         .expect(200)
         .expect({ deleted: true });
     } finally {

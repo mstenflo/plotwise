@@ -1,0 +1,262 @@
+<section class="planner-page">
+  <div class="page-toolbar">
+    <div class="page-toolbar__controls">
+      <label class="control-inline" for="site-tool-select">Tool</label>
+      <select
+        id="site-tool-select"
+        class="form-select form-select-sm"
+        [value]="canvasToolMode()"
+        (change)="setCanvasToolMode(($any($event.target)).value)"
+      >
+        <option value="select">Select</option>
+        <option value="pan">Pan</option>
+        <option value="draw-bed">Draw Bed</option>
+        <option value="draw-polygon-bed">Draw Polygon Bed</option>
+      </select>
+
+      <label class="control-inline control-inline--checkbox">
+        <input type="checkbox" [checked]="snapToGrid()" (change)="setSnapToGrid($event)" />
+        Snap to Grid
+      </label>
+
+      <button type="button" class="btn btn-sm btn-success" (click)="addBed()">Add Bed</button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" (click)="addStructure()">Add Structure</button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" (click)="addTree()">Add Tree</button>
+      <button type="button" class="btn btn-sm btn-outline-success" (click)="saveProject()">Save</button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" (click)="reloadProject()">Reload</button>
+    </div>
+  </div>
+
+  <main class="main-grid">
+    <aside class="panel panel--left" aria-label="Bed summaries">
+      <h2 class="panel__title">Beds</h2>
+      <p class="panel__subtitle">Current crops, next tasks, and open space.</p>
+
+      <div class="stack-list">
+        @for (bed of beds(); track bed.id) {
+          @let summary = planner.getBedSummary(bed.id);
+          <article
+            class="item-card item-card--clickable"
+            [class.item-card--selected]="selectedObjectId() === bed.id"
+            (click)="selectObject(bed.id)"
+          >
+            <div class="item-card__row">
+              <p class="item-card__title">{{ bed.name }}</p>
+              <button
+                type="button"
+                class="btn btn-sm btn-outline-primary"
+                (click)="$event.stopPropagation(); navigateToBedDetails(bed.id)"
+              >
+                Edit bed details
+              </button>
+            </div>
+            <p class="item-card__meta">{{ planner.getBedSummaryLine(bed.id) }}</p>
+            @if (summary && summary.currentPlants.length > 0) {
+              <p class="item-card__meta">
+                {{ getBedPlantNames(bed.id) }}
+              </p>
+            }
+            @if (summary?.nextTasks?.length) {
+              <p class="item-card__meta">
+                Next: {{ summary?.nextTasks?.[0]?.title }} on {{ summary?.nextTasks?.[0]?.dueDateIso | date: 'MMM d' }}
+              </p>
+            }
+            <p class="item-card__meta">Open area: {{ getOpenAreaSqFt(bed.id) }} sq ft</p>
+          </article>
+        }
+      </div>
+    </aside>
+
+    <section class="planner-canvas-area" aria-label="Site planner canvas">
+      <app-planner-canvas
+        [objects]="objects()"
+        [bedSummaries]="bedSummaries()"
+        [selectedObjectId]="selectedObjectId()"
+        [toolMode]="canvasToolMode()"
+        [snapToGrid]="snapToGrid()"
+        (objectSelected)="selectObject($event)"
+        (objectGeometryChanged)="updateObjectGeometry($event)"
+        (bedPolygonPointChanged)="updateBedPolygonPointFromCanvas($event)"
+        (objectRenameRequested)="renameObjectFromCanvas($event)"
+        (bedDrawn)="addBedFromCanvas($event)"
+        (polygonBedDrawn)="addPolygonBedFromCanvas($event)"
+      ></app-planner-canvas>
+    </section>
+
+    <aside class="panel panel--right" aria-label="Selection details">
+      <section class="panel-section">
+        <h2 class="panel__title">Selection</h2>
+        @if (selectedObject(); as object) {
+          <p class="panel__subtitle">{{ getObjectTypeLabel(object) }} • {{ object.name }}</p>
+
+          @if (quickRenameObjectId()) {
+            <div class="quick-rename-box">
+              <label class="form-label small" for="quick-rename">Rename object</label>
+              <div class="quick-rename-controls">
+                <input
+                  id="quick-rename"
+                  class="form-control form-control-sm"
+                  [value]="quickRenameValue()"
+                  (input)="updateQuickRenameValue($event)"
+                  (keydown.enter)="applyQuickRename()"
+                />
+                <button type="button" class="btn btn-sm btn-success" (click)="applyQuickRename()">Apply</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" (click)="cancelQuickRename()">Cancel</button>
+              </div>
+            </div>
+          }
+
+          <label class="form-label small" for="selected-name">Object name</label>
+          <input
+            id="selected-name"
+            class="form-control form-control-sm"
+            [value]="object.name"
+            (input)="renameSelectedObject($event)"
+          />
+
+          <div class="geometry-editor">
+            <h3 class="geometry-editor__title">Geometry (inches)</h3>
+            @if (object.type === 'bed') {
+              <p class="geometry-editor__summary">
+                Size {{ formatImperial(object.widthInches) }} x {{ formatImperial(object.heightInches) }} • Area {{ selectedBedAreaSqFt() }} sq ft
+              </p>
+            } @else if (object.type === 'tree') {
+              <p class="geometry-editor__summary">
+                Canopy {{ formatImperial(getSelectedObjectCanopy()) }}
+              </p>
+            }
+            <div class="geometry-editor__grid">
+              <label class="geometry-editor__field">
+                <span>X</span>
+                <input class="form-control form-control-sm" type="number" [value]="object.xInches" (change)="updateSelectedObjectDimension('xInches', $event)" />
+              </label>
+              <label class="geometry-editor__field">
+                <span>Y</span>
+                <input class="form-control form-control-sm" type="number" [value]="object.yInches" (change)="updateSelectedObjectDimension('yInches', $event)" />
+              </label>
+              <label class="geometry-editor__field">
+                <span>Width</span>
+                <input class="form-control form-control-sm" type="number" [value]="object.widthInches" (change)="updateSelectedObjectDimension('widthInches', $event)" />
+              </label>
+              <label class="geometry-editor__field">
+                <span>Height</span>
+                <input class="form-control form-control-sm" type="number" [value]="object.heightInches" (change)="updateSelectedObjectDimension('heightInches', $event)" />
+              </label>
+              <label class="geometry-editor__field geometry-editor__field--full">
+                <span>Rotation (deg)</span>
+                <input class="form-control form-control-sm" type="number" step="0.1" [value]="object.rotationDeg" (change)="updateSelectedObjectDimension('rotationDeg', $event)" />
+              </label>
+              @if (object.type === 'bed') {
+                <label class="geometry-editor__field geometry-editor__field--full">
+                  <span>Bed Shape</span>
+                  <select class="form-select form-select-sm" [value]="object.shapeType ?? 'rectangle'" (change)="setSelectedBedShapeType($event)">
+                    <option value="rectangle">Rectangle</option>
+                    <option value="polygon">Polygon</option>
+                  </select>
+                </label>
+
+                @if ((object.shapeType ?? 'rectangle') === 'polygon') {
+                  <div class="polygon-editor">
+                    <div class="polygon-editor__header">
+                      <span>Bed Polygon Points</span>
+                      <button type="button" class="btn btn-sm btn-outline-secondary" (click)="addBedPolygonPoint()">Add Point</button>
+                    </div>
+                    @for (point of getSelectedBedPolygonPoints(); track $index) {
+                      <div class="polygon-editor__row">
+                        <span class="polygon-editor__index">#{{ $index + 1 }}</span>
+                        <input class="form-control form-control-sm" type="number" min="0" max="100" [value]="(point.xPct * 100).toFixed(0)" (change)="updateBedPolygonPoint($index, 'xPct', $event)" />
+                        <input class="form-control form-control-sm" type="number" min="0" max="100" [value]="(point.yPct * 100).toFixed(0)" (change)="updateBedPolygonPoint($index, 'yPct', $event)" />
+                        <button type="button" class="btn btn-sm btn-outline-danger" (click)="removeBedPolygonPoint($index)">Remove</button>
+                      </div>
+                    }
+                  </div>
+                }
+              }
+            </div>
+          </div>
+
+          @if (selectedBedSummary(); as summary) {
+            <div class="selection-summary">
+              <h3 class="geometry-editor__title">Bed Summary</h3>
+              @if (summary.currentPlants.length > 0) {
+                <div class="stack-list">
+                  @for (plant of summary.currentPlants; track plant.seedId) {
+                    <article class="item-card">
+                      <p class="item-card__title">{{ plant.name }} {{ plant.variety }}</p>
+                      <p class="item-card__meta">{{ plant.plantCount }} plants • {{ plant.expectedHarvestPounds | number: '1.0-1' }} lbs</p>
+                    </article>
+                  }
+                </div>
+              } @else {
+                <p class="panel__subtitle">No current plants in this bed.</p>
+              }
+              <p class="item-card__meta">Open space: {{ (summary.openAreaSqInches / 144) | number: '1.0-1' }} sq ft</p>
+              @if (summary.nextTasks.length > 0) {
+                <p class="item-card__meta">Next task: {{ summary.nextTasks[0].title }}</p>
+              }
+              <button type="button" class="btn btn-sm btn-primary action-btn" (click)="navigateToBedDetails(object.id)">
+                Edit bed details
+              </button>
+            </div>
+          }
+
+          <div class="selection-actions">
+            @if (object.type === 'bed') {
+              <button type="button" class="btn btn-sm btn-outline-secondary" (click)="duplicateSelectedBed()">Duplicate Bed</button>
+            }
+            <button type="button" class="btn btn-sm btn-outline-danger" (click)="deleteSelectedObject()">Delete Selected</button>
+          </div>
+        } @else {
+          <p class="panel__subtitle">Select a bed, tree, or structure to inspect and edit it.</p>
+        }
+      </section>
+
+      <section class="panel-section">
+        <h2 class="panel__title">Calendar Tasks</h2>
+        <div class="task-filters">
+          <select class="form-select form-select-sm" [value]="taskStatusFilter()" (change)="setTaskStatusFilter(($any($event.target)).value)">
+            <option value="all">All Tasks</option>
+            <option value="open">Open</option>
+            <option value="completed">Completed</option>
+          </select>
+          <select class="form-select form-select-sm" [value]="taskBedFilter()" (change)="setTaskBedFilter(($any($event.target)).value)">
+            <option value="all">All Beds</option>
+            @for (bed of beds(); track bed.id) {
+              <option [value]="bed.id">{{ bed.name }}</option>
+            }
+          </select>
+        </div>
+
+        <div class="stack-list">
+          @for (task of filteredTasks(); track task.id) {
+            <article class="item-card item-card--clickable" [class.item-card--completed]="task.completed" (click)="focusBed(task.bedId)">
+              <p class="item-card__title">{{ task.title }}</p>
+              <p class="item-card__meta">{{ task.dueDateIso | date: 'MMM d, y' }} • {{ getBedName(task.bedId) }} • {{ task.priority }}</p>
+              <label class="task-toggle">
+                <input
+                  type="checkbox"
+                  [checked]="task.completed"
+                  (click)="$event.stopPropagation()"
+                  (change)="toggleTaskCompletion(task.id, $event)"
+                />
+                <span>{{ task.completed ? 'Completed' : 'Mark complete' }}</span>
+              </label>
+            </article>
+          }
+        </div>
+      </section>
+
+      <section class="panel-section">
+        <h2 class="panel__title">Warnings</h2>
+        <div class="stack-list">
+          @for (warning of warnings(); track warning.id) {
+            <article class="item-card item-card--clickable" [class.item-card--critical]="warning.severity === 'critical'" (click)="focusBed(warning.bedId)">
+              <p class="item-card__title">{{ warning.title }}</p>
+              <p class="item-card__meta">{{ warning.detail }}</p>
+            </article>
+          }
+        </div>
+      </section>
+    </aside>
+  </main>
+</section>

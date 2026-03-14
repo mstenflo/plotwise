@@ -1,0 +1,182 @@
+<section class="bed-details-page">
+  <div class="bed-details-page__toolbar">
+    <div class="bed-details-page__toolbar-group">
+      <button type="button" class="btn btn-sm btn-outline-secondary" (click)="backToSite()">Back to Site Planner</button>
+      @if (bed(); as currentBed) {
+        <div>
+          <h2 class="bed-details-page__title">{{ currentBed.name }}</h2>
+          <p class="bed-details-page__subtitle">
+            {{ formatImperial(currentBed.widthInches) }} x {{ formatImperial(currentBed.heightInches) }} • {{ bedAreaSqFt() }} sq ft
+          </p>
+        </div>
+      }
+    </div>
+
+    <div class="bed-details-page__toolbar-group">
+      <button type="button" class="btn btn-sm" [class.btn-primary]="toolMode() === 'select'" [class.btn-outline-primary]="toolMode() !== 'select'" (click)="setToolMode('select')">
+        Select
+      </button>
+      <button type="button" class="btn btn-sm" [class.btn-primary]="toolMode() === 'row-strip'" [class.btn-outline-primary]="toolMode() !== 'row-strip'" (click)="setToolMode('row-strip')">
+        Row Strip
+      </button>
+      <button type="button" class="btn btn-sm" [class.btn-primary]="toolMode() === 'block'" [class.btn-outline-primary]="toolMode() !== 'block'" (click)="setToolMode('block')">
+        Block
+      </button>
+      <button type="button" class="btn btn-sm" [class.btn-primary]="toolMode() === 'polygon'" [class.btn-outline-primary]="toolMode() !== 'polygon'" (click)="setToolMode('polygon')">
+        Polygon
+      </button>
+    </div>
+  </div>
+
+  <main class="bed-details-grid">
+    <aside class="panel panel--left">
+      <h3 class="panel__title">Seed Catalog</h3>
+      <p class="panel__subtitle">Choose a seed before drawing a placement.</p>
+      <div class="seed-list">
+        @for (seed of seeds(); track seed.id) {
+          <button type="button" class="seed-card" [class.seed-card--selected]="selectedSeedId() === seed.id" (click)="selectSeed(seed.id)">
+            <span class="seed-card__name">{{ seed.name }} - {{ seed.variety }}</span>
+            <span class="seed-card__meta">
+              {{ seed.spacingInches }}in spacing • {{ seed.rowSpacingInches }}in rows • {{ seed.daysToMaturity }} days
+            </span>
+          </button>
+        }
+      </div>
+
+      @if (summary(); as bedSummary) {
+        <div class="summary-block">
+          <h4 class="panel__title">Bed Summary</h4>
+          <p class="panel__subtitle">Open area: {{ (bedSummary.openAreaSqInches / 144) | number: '1.0-1' }} sq ft</p>
+          <div class="stack-list">
+            @for (plant of bedSummary.currentPlants; track plant.seedId) {
+              <article class="item-card">
+                <p class="item-card__title">{{ plant.name }} {{ plant.variety }}</p>
+                <p class="item-card__meta">{{ plant.plantCount }} plants • {{ plant.expectedHarvestPounds | number: '1.0-1' }} lbs</p>
+              </article>
+            }
+          </div>
+        </div>
+      }
+    </aside>
+
+    <section class="bed-details-canvas-area">
+      @if (loading()) {
+        <div class="loading-state">Loading bed details…</div>
+      } @else {
+        <app-bed-details-canvas
+          [bed]="bed()"
+          [placements]="placements()"
+          [selectedPlacementId]="selectedPlacementId()"
+          [toolMode]="toolMode()"
+          [snapToGrid]="true"
+          (placementSelected)="selectPlacement($event)"
+          (placementDrawn)="handlePlacementDrawn($event)"
+          (placementMoved)="handlePlacementMoved($event)"
+          (placementPointChanged)="handlePlacementPointChanged($event)"
+        ></app-bed-details-canvas>
+      }
+    </section>
+
+    <aside class="panel panel--right">
+      <h3 class="panel__title">Placement Inspector</h3>
+      @if (error()) {
+        <p class="error-text">{{ error() }}</p>
+      }
+      @if (selectedPlacement(); as placement) {
+        <p class="panel__subtitle">{{ placement.placementMode }} placement</p>
+
+        <label class="geometry-editor__field geometry-editor__field--full">
+          <span>Seed</span>
+          <select class="form-select form-select-sm" [value]="placement.seedId" (change)="updateSelectedPlacementSeed($event)">
+            @for (seed of seeds(); track seed.id) {
+              <option [value]="seed.id">{{ seed.name }} - {{ seed.variety }}</option>
+            }
+          </select>
+        </label>
+
+        <label class="geometry-editor__field geometry-editor__field--full">
+          <span>Color</span>
+          <input class="form-control form-control-sm form-control-color" type="color" [value]="placement.colorHex" (change)="updateSelectedPlacementColor($event)" />
+        </label>
+
+        <label class="geometry-editor__field geometry-editor__field--full">
+          <span>Planting Date</span>
+          <input class="form-control form-control-sm" type="date" [value]="toDateInputValue(placement.plantedOnIso)" (change)="updateSelectedPlacementDate($event)" />
+        </label>
+
+        <label class="geometry-editor__field geometry-editor__field--full">
+          <span>Plant Count</span>
+          <input class="form-control form-control-sm" type="number" min="1" [value]="placement.plantCount" (change)="updateSelectedPlacementPlantCount($event)" />
+        </label>
+
+        @if (harvestPreview(); as preview) {
+          <div class="summary-block">
+            <h4 class="panel__title">Harvest Preview</h4>
+            <p class="item-card__meta">{{ preview.expectedHarvestDateIso | date: 'MMM d, y' }}</p>
+            <p class="item-card__meta">{{ preview.expectedHarvestPounds | number: '1.0-1' }} lbs estimated</p>
+          </div>
+        }
+
+        @if (getSeed(placement.seedId); as seed) {
+          <div class="summary-block">
+            <h4 class="panel__title">Spacing Guidance</h4>
+            <p class="item-card__meta">{{ seed.spacingInches }}in plant spacing</p>
+            <p class="item-card__meta">{{ seed.rowSpacingInches }}in row spacing</p>
+            <p class="item-card__meta">{{ seed.daysToMaturity }} days to maturity</p>
+          </div>
+        }
+
+        <div class="summary-block">
+          <div class="summary-block__header">
+            <h4 class="panel__title">Vertices</h4>
+            <button type="button" class="btn btn-sm btn-outline-secondary" (click)="addVertex()">Add Vertex</button>
+          </div>
+          <div class="stack-list">
+            @for (point of placement.polygonPoints; track $index) {
+              <article class="item-card item-card--compact">
+                <p class="item-card__meta">#{{ $index + 1 }} • {{ point.xInches }}in, {{ point.yInches }}in</p>
+                <button type="button" class="btn btn-sm btn-outline-danger" [disabled]="placement.polygonPoints.length <= 3" (click)="removeVertex($index)">
+                  Remove
+                </button>
+              </article>
+            }
+          </div>
+        </div>
+
+        @if (warnings().length > 0) {
+          <div class="summary-block">
+            <h4 class="panel__title">Warnings</h4>
+            <div class="stack-list">
+              @for (warning of warnings(); track warning.id) {
+                @if (!warning.placementId || warning.placementId === placement.id) {
+                  <article class="item-card" [class.item-card--critical]="warning.severity === 'critical'">
+                    <p class="item-card__title">{{ warning.title }}</p>
+                    <p class="item-card__meta">{{ warning.detail }}</p>
+                  </article>
+                }
+              }
+            </div>
+          </div>
+        }
+
+        <button type="button" class="btn btn-sm btn-outline-danger action-btn" [disabled]="saving()" (click)="deleteSelectedPlacement()">
+          Delete Placement
+        </button>
+      } @else {
+        <p class="panel__subtitle">Select a placement or draw a new row strip, block, or polygon.</p>
+      }
+
+      <section class="panel-section">
+        <h3 class="panel__title">Next Tasks</h3>
+        <div class="stack-list">
+          @for (task of tasks(); track task.id) {
+            <article class="item-card">
+              <p class="item-card__title">{{ task.title }}</p>
+              <p class="item-card__meta">{{ task.dueDateIso | date: 'MMM d, y' }} • {{ task.priority }}</p>
+            </article>
+          }
+        </div>
+      </section>
+    </aside>
+  </main>
+</section>

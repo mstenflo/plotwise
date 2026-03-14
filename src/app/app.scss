@@ -11,6 +11,11 @@
 	flex-direction: column;
 }
 
+.shell-body {
+	flex: 1;
+	min-height: 0;
+}
+
 .topbar {
 	display: flex;
 	justify-content: space-between;

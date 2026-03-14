@@ -1,0 +1,19 @@
+:host {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.bed-canvas-shell {
+  width: 100%;
+  height: 100%;
+  border-radius: 14px;
+  border: 1px solid #bfd7bc;
+  background: radial-gradient(circle at 16% 12%, #f8fff6 0%, #edf7ea 50%, #ddeedc 100%);
+  overflow: hidden;
+}
+
+.bed-canvas-host {
+  width: 100%;
+  height: 100%;
+}

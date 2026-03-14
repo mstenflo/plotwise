@@ -1,9 +1,17 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { CreateProjectDto } from './dto/create-project.dto';
-import { CreatePlantingDto } from './dto/create-planting.dto';
-import { CalendarTaskRecord, PlantingRecord } from './dto/planning.types';
-import { UpsertPlantingDto } from './dto/upsert-planting.dto';
+import { CreatePlacementDto } from './dto/create-placement.dto';
+import {
+  BedDetailsResponse,
+  BedSummaryRecord,
+  CalendarTaskRecord,
+  HarvestPreviewResponse,
+  PlantingRecord,
+} from './dto/planning.types';
+import { PreviewHarvestDto } from './dto/preview-harvest.dto';
 import { UpdateTaskStatusDto } from './dto/update-task-status.dto';
+import { UpdateBedDetailsDto } from './dto/update-bed-details.dto';
+import { UpdatePlacementDto } from './dto/update-placement.dto';
 import { PlannerService } from './planner.service';
 import type { GardenProject } from './models/planner.types';
 
@@ -22,20 +30,45 @@ export class PlannerController {
   }
 
   @Get(':id/plantings')
-  async getProjectPlantings(@Param('id') id: string): Promise<PlantingRecord[]> {
-    return this.plannerService.listProjectPlantings(id);
+  async getProjectPlantings(
+    @Param('id') id: string,
+    @Query('bedId') bedId?: string,
+  ): Promise<PlantingRecord[]> {
+    return this.plannerService.listProjectPlantings(id, bedId);
+  }
+
+  @Get(':id/beds/summary')
+  async getBedSummaries(@Param('id') id: string): Promise<BedSummaryRecord[]> {
+    return this.plannerService.listBedSummaries(id);
+  }
+
+  @Get(':id/beds/:bedId')
+  async getBedDetails(
+    @Param('id') id: string,
+    @Param('bedId') bedId: string,
+  ): Promise<BedDetailsResponse> {
+    return this.plannerService.getBedDetails(id, bedId);
+  }
+
+  @Put(':id/beds/:bedId')
+  async updateBedDetails(
+    @Param('id') id: string,
+    @Param('bedId') bedId: string,
+    @Body() body: UpdateBedDetailsDto,
+  ): Promise<BedDetailsResponse> {
+    return this.plannerService.updateBedDetails(id, bedId, body);
   }
 
   @Get(':id/tasks')
   async getProjectTasks(
     @Param('id') id: string,
     @Query('bedId') bedId?: string,
-    @Query('zoneId') zoneId?: string,
+    @Query('placementId') placementId?: string,
     @Query('completed') completed?: 'true' | 'false',
   ): Promise<CalendarTaskRecord[]> {
     return this.plannerService.listProjectTasks(id, {
       bedId,
-      zoneId,
+      placementId,
       completed: completed === undefined ? undefined : completed === 'true',
     });
   }
@@ -46,48 +79,41 @@ export class PlannerController {
     return { synced: true };
   }
 
-  @Post(':id/plantings')
-  async createPlanting(
-    @Param('id') id: string,
-    @Body() body: CreatePlantingDto,
-  ): Promise<PlantingRecord> {
-    return this.plannerService.createPlanting(id, body);
-  }
-
-  @Put(':id/plantings/:bedId')
-  async upsertPlantingForBed(
+  @Post(':id/beds/:bedId/placements')
+  async createPlacement(
     @Param('id') id: string,
     @Param('bedId') bedId: string,
-    @Body() body: UpsertPlantingDto,
+    @Body() body: CreatePlacementDto,
   ): Promise<PlantingRecord> {
-    return this.plannerService.upsertPlanting(id, bedId, undefined, body);
+    return this.plannerService.createPlacement(id, bedId, body);
   }
 
-  @Put(':id/plantings/:bedId/:zoneId')
-  async upsertPlantingForZone(
+  @Put(':id/beds/:bedId/placements/:placementId')
+  async updatePlacement(
     @Param('id') id: string,
     @Param('bedId') bedId: string,
-    @Param('zoneId') zoneId: string,
-    @Body() body: UpsertPlantingDto,
+    @Param('placementId') placementId: string,
+    @Body() body: UpdatePlacementDto,
   ): Promise<PlantingRecord> {
-    return this.plannerService.upsertPlanting(id, bedId, zoneId, { ...body, zoneId });
+    return this.plannerService.updatePlacement(id, bedId, placementId, body);
   }
 
-  @Delete(':id/plantings/:bedId')
-  async deletePlantingForBed(
+  @Delete(':id/beds/:bedId/placements/:placementId')
+  async deletePlacement(
     @Param('id') id: string,
     @Param('bedId') bedId: string,
+    @Param('placementId') placementId: string,
   ): Promise<{ deleted: true }> {
-    return this.plannerService.deletePlanting(id, bedId);
+    return this.plannerService.deletePlacement(id, bedId, placementId);
   }
 
-  @Delete(':id/plantings/:bedId/:zoneId')
-  async deletePlantingForZone(
+  @Post(':id/beds/:bedId/placements/preview-harvest')
+  async previewHarvest(
     @Param('id') id: string,
     @Param('bedId') bedId: string,
-    @Param('zoneId') zoneId: string,
-  ): Promise<{ deleted: true }> {
-    return this.plannerService.deletePlanting(id, bedId, zoneId);
+    @Body() body: PreviewHarvestDto,
+  ): Promise<HarvestPreviewResponse> {
+    return this.plannerService.previewHarvest(id, bedId, body);
   }
 
   @Patch(':id/tasks/:taskId')

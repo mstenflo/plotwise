@@ -2,6 +2,9 @@ export type CropLifecycle = 'annual' | 'perennial';
 export type SunExposure = 'full-sun' | 'part-sun' | 'shade';
 export type ProjectSeason = 'spring' | 'summer' | 'fall' | 'winter';
 export type LayoutObjectType = 'bed' | 'structure' | 'tree';
+export type BedShapeType = 'rectangle' | 'polygon';
+export type ZoneShapeType = 'row-strip' | 'square' | 'polygon';
+export type BedPlacementMode = 'row-strip' | 'block' | 'polygon';
 
 export interface YieldProfile {
   averagePoundsPerPlant: number;
@@ -33,6 +36,16 @@ export interface SoilCondition {
   organicMatterPercent: number;
 }
 
+export interface ShapePoint {
+  xPct: number;
+  yPct: number;
+}
+
+export interface PlacementPoint {
+  xInches: number;
+  yInches: number;
+}
+
 export interface LayoutObjectBase {
   id: string;
   type: LayoutObjectType;
@@ -52,15 +65,42 @@ export interface BedPlanting {
   expectedHarvestDateIso: string;
 }
 
+export interface BedPlacement {
+  id: string;
+  projectId: string;
+  bedId: string;
+  seedId: string;
+  plantedOnIso: string;
+  expectedHarvestDateIso: string;
+  plantCount: number;
+  expectedHarvestPounds: number;
+  colorHex: string;
+  placementMode: BedPlacementMode;
+  polygonPoints: PlacementPoint[];
+  legacyZoneId?: string;
+  updatedAtIso: string;
+}
+
 export interface BedZone {
   id: string;
   name: string;
   rowIndex: number;
+  shapeType?: ZoneShapeType;
+  colorHex?: string;
+  rect?: {
+    xPct: number;
+    yPct: number;
+    widthPct: number;
+    heightPct: number;
+  };
+  polygon?: ShapePoint[];
   planting?: BedPlanting;
 }
 
 export interface BedLayout extends LayoutObjectBase {
   type: 'bed';
+  shapeType?: BedShapeType;
+  polygon?: ShapePoint[];
   sunExposure: SunExposure;
   soil: SoilCondition;
   rows: number;

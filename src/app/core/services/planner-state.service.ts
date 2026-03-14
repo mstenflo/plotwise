@@ -1,26 +1,24 @@
 import { computed, inject, Injectable, signal } from '@angular/core';
 import {
-  BedPolygonDraftPoint,
-  BedPlanting,
-  BedShapeType,
-  BedZone,
-  BedGeometryUpdate,
   BedDraftGeometry,
   BedLayout,
+  BedPolygonDraftPoint,
+  BedSummary,
+  BedShapeType,
   GardenProject,
   LayoutObject,
+  LayoutObjectGeometryUpdate,
   PlannerTask,
   PlannerWarning,
   ProjectSeason,
   ShapePoint,
-  ZoneRect,
-  ZoneShapeType
+  StructureLayout,
+  TreeLayout,
 } from '../models/planner.model';
 import { SeedMetadata } from '../models/seed.model';
-import { formatInches } from '../models/units.model';
 import { PlannerApiService } from './planner-api.service';
 
-const STORAGE_KEY = 'plotwise.projects.v1';
+const STORAGE_KEY = 'plotwise.projects.v2';
 
 @Injectable({ providedIn: 'root' })
 export class PlannerStateService {
@@ -33,196 +31,117 @@ export class PlannerStateService {
   readonly seedCatalog = signal<SeedMetadata[]>([]);
   readonly backendTasks = signal<PlannerTask[]>([]);
   readonly backendTasksLoadedForProjectId = signal<string | null>(null);
-
+  readonly backendBedSummaries = signal<BedSummary[]>([]);
+  readonly backendBedSummariesLoadedForProjectId = signal<string | null>(null);
   readonly projects = signal<GardenProject[]>(this.loadProjects());
 
   constructor() {
     this.loadSavedProjects();
     this.loadSeedCatalog();
-    this.loadProjectTasks(this.activeProjectId());
+    this.refreshProjectResources(this.activeProjectId());
   }
 
-  readonly activeProject = computed(() =>
-    this.projects().find((project) => project.id === this.activeProjectId()) ?? this.projects()[0]
+  readonly activeProject = computed(
+    () => {
+      const projects = this.projects();
+      return (
+        projects.find((project) => project.id === this.activeProjectId()) ??
+        projects[0] ??
+        this.createStarterProject()
+      );
+    },
   );
 
-  readonly season = computed(() => this.activeProject().season);
+  readonly objects = computed(() => this.activeProject().objects);
+  readonly beds = computed(() =>
+    this.objects().filter((object): object is BedLayout => object.type === 'bed'),
+  );
+  readonly selectedObject = computed(
+    () =>
+      this.objects().find((object) => object.id === this.selectedObjectId()) ?? null,
+  );
+  readonly selectedBed = computed(
+    () =>
+      this.beds().find((bed) => bed.id === this.selectedObjectId()) ?? null,
+  );
   readonly seeds = computed(() => {
     const projectSeeds = this.activeProject().seeds;
-    if (projectSeeds.length > 0) {
-      return projectSeeds;
-    }
-
-    return this.seedCatalog();
+    return projectSeeds.length > 0 ? projectSeeds : this.seedCatalog();
   });
-  readonly beds = computed(() => this.activeProject().objects.filter((obj): obj is BedLayout => obj.type === 'bed'));
-
-  readonly selectedObject = computed(() =>
-    this.activeProject().objects.find((item) => item.id === this.selectedObjectId()) ?? null
-  );
-
-  readonly selectedBed = computed(() =>
-    this.beds().find((bed) => bed.id === this.selectedObjectId()) ?? null
-  );
-
-  readonly tasks = computed<PlannerTask[]>(() => {
+  readonly tasks = computed(() => {
     if (this.backendTasksLoadedForProjectId() === this.activeProjectId()) {
       return this.backendTasks();
     }
 
-    return this.buildLocalTasks();
+    return this.buildFallbackTasks();
   });
-
-  readonly warnings = computed<PlannerWarning[]>(() => {
-    const result: PlannerWarning[] = [];
-
-    for (const bed of this.beds()) {
-      const zones = this.resolveZonesForBed(bed);
-      for (const zone of zones) {
-        if (!zone.planting) {
-          continue;
-        }
-
-        const seed = this.seeds().find((entry) => entry.id === zone.planting?.seedId);
-        if (!seed) {
-          continue;
-        }
-
-        if (seed.preferredSun !== bed.sunExposure) {
-          result.push({
-            id: `sun-${bed.id}-${zone.id}`,
-            title: `${bed.name} ${zone.name}: sunlight mismatch`,
-            detail: `${seed.name} prefers ${seed.preferredSun.replace('-', ' ')}, bed is ${bed.sunExposure.replace('-', ' ')}.`,
-            severity: 'warning',
-            bedId: bed.id
-          });
-        }
-
-        if (bed.soil.ph < seed.soilPhMin || bed.soil.ph > seed.soilPhMax) {
-          result.push({
-            id: `soil-${bed.id}-${zone.id}`,
-            title: `${bed.name} ${zone.name}: soil pH risk`,
-            detail: `${seed.name} target pH is ${seed.soilPhMin}-${seed.soilPhMax}. Current pH is ${bed.soil.ph}.`,
-            severity: 'warning',
-            bedId: bed.id
-          });
-        }
-
-        if (bed.lastSeasonFamily === seed.family) {
-          result.push({
-            id: `rotation-${bed.id}-${zone.id}`,
-            title: `${bed.name} ${zone.name}: crop rotation conflict`,
-            detail: `${seed.family} family was already planted last season in this bed.`,
-            severity: 'critical',
-            bedId: bed.id
-          });
-        }
-
-        const density = this.calculateZoneDensityScore(bed, zone, seed);
-        if (density > 1) {
-          result.push({
-            id: `density-${bed.id}-${zone.id}`,
-            title: `${bed.name} ${zone.name}: spacing exceeds recommendation`,
-            detail: `Estimated density is ${(density * 100).toFixed(0)}% of recommended spacing.`,
-            severity: 'critical',
-            bedId: bed.id
-          });
-        }
-      }
+  readonly bedSummaries = computed(() => {
+    if (this.backendBedSummariesLoadedForProjectId() === this.activeProjectId()) {
+      return this.backendBedSummaries();
     }
 
-    result.push(...this.computeCompanionWarnings());
+    return this.buildFallbackBedSummaries();
+  });
+  readonly warnings = computed(() =>
+    this.bedSummaries().flatMap((summary) => summary.warnings),
+  );
+  readonly visibleProjects = computed(() =>
+    this.projects().filter((project) => !project.archivedAtIso),
+  );
 
-    if (result.length === 0) {
-      result.push({
-        id: 'healthy-plan',
-        title: 'No active warnings',
-        detail: 'Current project has no detected spacing, soil, or rotation conflicts.',
-        severity: 'info'
+  setActiveProject(projectId: string): void {
+    const existing = this.projects().some((project) => project.id === projectId);
+    if (!existing) {
+      this.plannerApi.getProject(projectId).subscribe({
+        next: (project) => {
+          this.upsertProject(project);
+          this.selectProject(projectId);
+        },
       });
+      return;
     }
 
-    return result;
-  });
+    this.selectProject(projectId);
+  }
 
-  private buildLocalTasks(): PlannerTask[] {
-    const items: PlannerTask[] = [];
-    const completedTaskIds = new Set(this.activeProject().completedTaskIds ?? []);
+  setSeason(season: ProjectSeason): void {
+    this.patchProject((project) => ({ ...project, season }));
+  }
 
-    for (const bed of this.beds()) {
-      const zones = this.resolveZonesForBed(bed);
+  selectObject(objectId: string | null): void {
+    this.selectedObjectId.set(objectId);
+  }
 
-      for (const zone of zones) {
-        if (!zone.planting) {
-          const taskId = `task-plan-${bed.id}-${zone.id}`;
-          items.push({
-            id: taskId,
-            title: `Plan planting for ${bed.name} ${zone.name}`,
-            dueDateIso: new Date().toISOString(),
-            bedId: bed.id,
-            priority: 'info',
-            completed: completedTaskIds.has(taskId)
-          });
-          continue;
-        }
-
-        const harvestTaskId = `task-harvest-${bed.id}-${zone.id}`;
-        items.push({
-          id: harvestTaskId,
-          title: `Harvest ${bed.name} ${zone.name}`,
-          dueDateIso: zone.planting.expectedHarvestDateIso,
-          bedId: bed.id,
-          priority: 'warning',
-          completed: completedTaskIds.has(harvestTaskId)
-        });
-
-        const seed = this.seeds().find((entry) => entry.id === zone.planting?.seedId);
-        if (seed?.successionFriendly) {
-          const successionDate = new Date(zone.planting.plantedOnIso);
-          successionDate.setDate(successionDate.getDate() + 21);
-          const successionTaskId = `task-succession-${bed.id}-${zone.id}`;
-          items.push({
-            id: successionTaskId,
-            title: `Succession sowing for ${seed.name} (${bed.name} ${zone.name})`,
-            dueDateIso: successionDate.toISOString(),
-            bedId: bed.id,
-            priority: 'info',
-            completed: completedTaskIds.has(successionTaskId)
-          });
-        }
-      }
-    }
-
-    return items.sort((a, b) => a.dueDateIso.localeCompare(b.dueDateIso));
+  selectSeed(seedId: string): void {
+    this.selectedSeedId.set(seedId);
   }
 
   addBed(draft?: BedDraftGeometry): void {
-    const index = this.beds().length + 1;
-    const newBed: BedLayout = {
+    const nextIndex = this.beds().length + 1;
+    const bed: BedLayout = {
       id: `bed-${crypto.randomUUID().slice(0, 8)}`,
       type: 'bed',
-      name: `Bed ${index}`,
+      name: `Bed ${nextIndex}`,
       shapeType: 'rectangle',
-      xInches: Math.max(0, Math.round(draft?.xInches ?? 24 + index * 12)),
-      yInches: Math.max(0, Math.round(draft?.yInches ?? 24 + index * 8)),
+      xInches: Math.max(0, Math.round(draft?.xInches ?? 24 + nextIndex * 12)),
+      yInches: Math.max(0, Math.round(draft?.yInches ?? 24 + nextIndex * 8)),
       widthInches: Math.max(12, Math.round(draft?.widthInches ?? 96)),
       heightInches: Math.max(12, Math.round(draft?.heightInches ?? 36)),
       rotationDeg: 0,
       rows: 3,
-      zones: this.createDefaultZones(3),
       sunExposure: 'full-sun',
       soil: {
         ph: 6.5,
         drainage: 'good',
-        organicMatterPercent: 4
-      }
+        organicMatterPercent: 4,
+      },
     };
 
     this.patchProject((project) => ({
       ...project,
-      objects: [...project.objects, newBed]
+      objects: [...project.objects, bed],
     }));
-    this.selectedObjectId.set(newBed.id);
+    this.selectedObjectId.set(bed.id);
   }
 
   addPolygonBed(points: BedPolygonDraftPoint[]): void {
@@ -236,12 +155,12 @@ export class PlannerStateService {
     const minY = Math.min(...yValues);
     const maxX = Math.max(...xValues);
     const maxY = Math.max(...yValues);
+    const nextIndex = this.beds().length + 1;
 
-    const index = this.beds().length + 1;
-    const newBed: BedLayout = {
+    const bed: BedLayout = {
       id: `bed-${crypto.randomUUID().slice(0, 8)}`,
       type: 'bed',
-      name: `Bed ${index}`,
+      name: `Bed ${nextIndex}`,
       shapeType: 'polygon',
       xInches: Math.round(minX),
       yInches: Math.round(minY),
@@ -249,213 +168,108 @@ export class PlannerStateService {
       heightInches: Math.max(12, Math.round(maxY - minY)),
       rotationDeg: 0,
       rows: 3,
-      zones: this.createDefaultZones(3),
       polygon: points.map((point) => ({
         xPct: (point.xInches - minX) / Math.max(1, maxX - minX),
-        yPct: (point.yInches - minY) / Math.max(1, maxY - minY)
+        yPct: (point.yInches - minY) / Math.max(1, maxY - minY),
       })),
       sunExposure: 'full-sun',
       soil: {
         ph: 6.5,
         drainage: 'good',
-        organicMatterPercent: 4
-      }
+        organicMatterPercent: 4,
+      },
     };
 
     this.patchProject((project) => ({
       ...project,
-      objects: [...project.objects, newBed]
+      objects: [...project.objects, bed],
     }));
-    this.selectedObjectId.set(newBed.id);
+    this.selectedObjectId.set(bed.id);
   }
 
-  selectObject(objectId: string | null): void {
-    this.selectedObjectId.set(objectId);
-  }
-
-  selectSeed(seedId: string): void {
-    this.selectedSeedId.set(seedId);
-  }
-
-  setActiveProject(projectId: string): void {
-    const exists = this.projects().some((project) => project.id === projectId);
-    if (!exists) {
-      return;
-    }
-
-    this.activeProjectId.set(projectId);
-    this.selectedObjectId.set(null);
-    this.syncProjectTasks(projectId);
-    this.loadProjectTasks(projectId);
-  }
-
-  archiveActiveProject(): void {
-    const active = this.activeProject();
-    if (!active || active.archivedAtIso) {
-      return;
-    }
-
-    this.patchProject((project) => ({
-      ...project,
-      archivedAtIso: new Date().toISOString()
-    }));
-
-    this.ensureActiveProjectVisible();
-  }
-
-  unarchiveProject(projectId: string): void {
-    const exists = this.projects().some((project) => project.id === projectId && !!project.archivedAtIso);
-    if (!exists) {
-      return;
-    }
-
-    const updated = this.projects().map((project) =>
-      project.id === projectId
-        ? { ...project, archivedAtIso: undefined, updatedAtIso: new Date().toISOString() }
-        : project
-    );
-
-    this.projects.set(updated);
-    this.persistProjectsToStorage();
-  }
-
-  setSeason(season: ProjectSeason): void {
-    this.patchProject((project) => ({ ...project, season }));
-  }
-
-  toggleTaskCompletion(taskId: string, completed: boolean): void {
-    this.patchProject((project) => {
-      const completedTaskIds = new Set(project.completedTaskIds ?? []);
-      if (completed) {
-        completedTaskIds.add(taskId);
-      } else {
-        completedTaskIds.delete(taskId);
-      }
-
-      return {
-        ...project,
-        completedTaskIds: [...completedTaskIds]
-      };
-    });
-
-    const projectId = this.activeProjectId();
-    if (this.backendTasksLoadedForProjectId() === projectId) {
-      this.backendTasks.update((tasks) =>
-        tasks.map((task) => (task.id === taskId ? { ...task, completed } : task))
-      );
-
-      this.plannerApi.updateTaskStatus(projectId, taskId, completed).subscribe({
-        next: (savedTask) => {
-          this.backendTasks.update((tasks) =>
-            tasks.map((task) => (task.id === savedTask.id ? savedTask : task))
-          );
-        },
-        error: () => {
-          this.backendTasks.update((tasks) =>
-            tasks.map((task) => (task.id === taskId ? { ...task, completed: !completed } : task))
-          );
-        }
-      });
-    }
-  }
-
-  assignSelectedSeedToSelectedBed(): void {
-    const bed = this.selectedBed();
-    if (!bed) {
-      return;
-    }
-
-    const firstZone = this.resolveZonesForBed(bed)[0];
-    if (!firstZone) {
-      return;
-    }
-
-    this.assignSelectedSeedToBedZone(bed.id, firstZone.id);
-  }
-
-  clearSelectedBedPlanting(): void {
-    const bed = this.selectedBed();
-    if (!bed) {
-      return;
-    }
-
-    this.patchObject(bed.id, (object) => {
-      if (object.type !== 'bed') {
-        return object;
-      }
-
-      return {
-        ...object,
-        planting: undefined,
-        zones: this.resolveZonesForBed(object).map((zone) => ({ ...zone, planting: undefined }))
-      };
-    });
-
-    this.clearTaskCompletionForBed(bed.id);
-  }
-
-  duplicateSelectedBed(): void {
-    const bed = this.selectedBed();
-    if (!bed) {
-      return;
-    }
-
-    const duplicate: BedLayout = {
-      ...bed,
-      id: `bed-${crypto.randomUUID().slice(0, 8)}`,
-      name: `${bed.name} Copy`,
-      xInches: bed.xInches + 16,
-      yInches: bed.yInches + 16,
-      planting: bed.planting ? { ...bed.planting } : undefined,
-      zones: this.resolveZonesForBed(bed).map((zone) => ({
-        ...zone,
-        id: `zone-${crypto.randomUUID().slice(0, 6)}`,
-        planting: zone.planting ? { ...zone.planting } : undefined
-      }))
+  addStructure(): void {
+    const structure: StructureLayout = {
+      id: `structure-${crypto.randomUUID().slice(0, 8)}`,
+      type: 'structure',
+      name: 'New Structure',
+      xInches: 220,
+      yInches: 180,
+      widthInches: 72,
+      heightInches: 48,
+      rotationDeg: 0,
     };
 
     this.patchProject((project) => ({
       ...project,
-      objects: [...project.objects, duplicate]
+      objects: [...project.objects, structure],
     }));
-
-    this.selectedObjectId.set(duplicate.id);
+    this.selectedObjectId.set(structure.id);
   }
 
-  deleteSelectedObject(): void {
-    const selectedId = this.selectedObjectId();
-    if (!selectedId) {
-      return;
-    }
-
-    const selectedBed = this.selectedBed();
+  addTree(): void {
+    const tree: TreeLayout = {
+      id: `tree-${crypto.randomUUID().slice(0, 8)}`,
+      type: 'tree',
+      name: 'New Tree',
+      xInches: 320,
+      yInches: 64,
+      widthInches: 72,
+      heightInches: 72,
+      rotationDeg: 0,
+      canopyDiameterInches: 108,
+    };
 
     this.patchProject((project) => ({
       ...project,
-      objects: project.objects.filter((item) => item.id !== selectedId)
+      objects: [...project.objects, tree],
     }));
-
-    if (selectedBed) {
-      this.clearTaskCompletionForBed(selectedBed.id);
-    }
-
-    this.selectedObjectId.set(null);
+    this.selectedObjectId.set(tree.id);
   }
 
-  updateBedGeometry(update: BedGeometryUpdate): void {
-    this.patchObject(update.bedId, (object) => {
-      if (object.type !== 'bed') {
-        return object;
+  updateObjectGeometry(update: LayoutObjectGeometryUpdate): void {
+    this.patchObject(update.objectId, (object) => {
+      const widthInches = Math.max(12, Math.round(update.widthInches));
+      const heightInches = Math.max(12, Math.round(update.heightInches));
+      const rotationDeg = Number(update.rotationDeg.toFixed(2));
+
+      if (object.type === 'tree') {
+        return {
+          ...object,
+          xInches: Math.max(0, Math.round(update.xInches)),
+          yInches: Math.max(0, Math.round(update.yInches)),
+          widthInches,
+          heightInches,
+          rotationDeg,
+          canopyDiameterInches: Math.max(widthInches, heightInches),
+        };
       }
 
       return {
         ...object,
         xInches: Math.max(0, Math.round(update.xInches)),
         yInches: Math.max(0, Math.round(update.yInches)),
-        widthInches: Math.max(12, Math.round(update.widthInches)),
-        heightInches: Math.max(12, Math.round(update.heightInches)),
-        rotationDeg: Number(update.rotationDeg.toFixed(2))
+        widthInches,
+        heightInches,
+        rotationDeg,
       };
+    });
+  }
+
+  updateBedGeometry(update: {
+    bedId: string;
+    xInches: number;
+    yInches: number;
+    widthInches: number;
+    heightInches: number;
+    rotationDeg: number;
+  }): void {
+    this.updateObjectGeometry({
+      objectId: update.bedId,
+      xInches: update.xInches,
+      yInches: update.yInches,
+      widthInches: update.widthInches,
+      heightInches: update.heightInches,
+      rotationDeg: update.rotationDeg,
     });
   }
 
@@ -465,7 +279,7 @@ export class PlannerStateService {
       return;
     }
 
-    this.patchObject(selectedId, (object) => ({ ...object, name: name.trim() || object.name }));
+    this.renameObject(selectedId, name);
   }
 
   renameObject(objectId: string, name: string): void {
@@ -477,22 +291,38 @@ export class PlannerStateService {
     this.patchObject(objectId, (object) => ({ ...object, name: trimmed }));
   }
 
-  setBedRows(bedId: string, rows: number): void {
-    const nextRows = Math.max(1, Math.round(rows));
-    this.patchObject(bedId, (object) => {
-      if (object.type !== 'bed') {
-        return object;
-      }
+  duplicateSelectedBed(): void {
+    const bed = this.selectedBed();
+    if (!bed) {
+      return;
+    }
 
-      return {
-        ...object,
-        rows: nextRows,
-        zones: this.reconcileZones(
-          object.zones ?? this.createDefaultZones(object.rows, object.planting ? [object.planting] : []),
-          nextRows
-        )
-      };
-    });
+    const duplicate: BedLayout = {
+      ...structuredClone(bed),
+      id: `bed-${crypto.randomUUID().slice(0, 8)}`,
+      name: `${bed.name} Copy`,
+      xInches: bed.xInches + 16,
+      yInches: bed.yInches + 16,
+    };
+
+    this.patchProject((project) => ({
+      ...project,
+      objects: [...project.objects, duplicate],
+    }));
+    this.selectedObjectId.set(duplicate.id);
+  }
+
+  deleteSelectedObject(): void {
+    const selectedId = this.selectedObjectId();
+    if (!selectedId) {
+      return;
+    }
+
+    this.patchProject((project) => ({
+      ...project,
+      objects: project.objects.filter((object) => object.id !== selectedId),
+    }));
+    this.selectedObjectId.set(null);
   }
 
   setBedShapeType(bedId: string, shapeType: BedShapeType): void {
@@ -510,29 +340,33 @@ export class PlannerStateService {
                 { xPct: 0.06, yPct: 0.2 },
                 { xPct: 0.82, yPct: 0.06 },
                 { xPct: 0.95, yPct: 0.76 },
-                { xPct: 0.3, yPct: 0.94 }
+                { xPct: 0.3, yPct: 0.94 },
               ]
-            : undefined
+            : undefined,
       };
     });
   }
 
-  updateBedPolygonPoint(bedId: string, pointIndex: number, point: Partial<ShapePoint>): void {
+  updateBedPolygonPoint(
+    bedId: string,
+    pointIndex: number,
+    point: Partial<ShapePoint>,
+  ): void {
     this.patchObject(bedId, (object) => {
       if (object.type !== 'bed' || !Array.isArray(object.polygon) || !object.polygon[pointIndex]) {
         return object;
       }
 
-      const nextPolygon = [...object.polygon];
-      const current = nextPolygon[pointIndex];
-      nextPolygon[pointIndex] = {
+      const polygon = [...object.polygon];
+      const current = polygon[pointIndex];
+      polygon[pointIndex] = {
         xPct: this.clampPct(point.xPct ?? current.xPct),
-        yPct: this.clampPct(point.yPct ?? current.yPct)
+        yPct: this.clampPct(point.yPct ?? current.yPct),
       };
 
       return {
         ...object,
-        polygon: nextPolygon
+        polygon,
       };
     });
   }
@@ -547,13 +381,13 @@ export class PlannerStateService {
       const fallback = polygon[polygon.length - 1] ?? { xPct: 0.5, yPct: 0.5 };
       polygon.push({
         xPct: this.clampPct(fallback.xPct + 0.05),
-        yPct: this.clampPct(fallback.yPct + 0.05)
+        yPct: this.clampPct(fallback.yPct + 0.05),
       });
 
       return {
         ...object,
         shapeType: 'polygon',
-        polygon
+        polygon,
       };
     });
   }
@@ -566,257 +400,35 @@ export class PlannerStateService {
 
       return {
         ...object,
-        polygon: object.polygon.filter((_, index) => index !== pointIndex)
+        polygon: object.polygon.filter((_, index) => index !== pointIndex),
       };
     });
   }
 
-  setZoneShapeType(bedId: string, zoneId: string, shapeType: ZoneShapeType): void {
-    this.patchObject(bedId, (object) => {
-      if (object.type !== 'bed') {
-        return object;
+  toggleTaskCompletion(taskId: string, completed: boolean): void {
+    this.patchProject((project) => {
+      const completedTaskIds = new Set(project.completedTaskIds ?? []);
+      if (completed) {
+        completedTaskIds.add(taskId);
+      } else {
+        completedTaskIds.delete(taskId);
       }
 
       return {
-        ...object,
-        zones: this.resolveZonesForBed(object).map((zone) => {
-          if (zone.id !== zoneId) {
-            return zone;
-          }
-
-          return {
-            ...zone,
-            shapeType,
-            rect: shapeType === 'square' ? zone.rect ?? { xPct: 0.08, yPct: 0.1, widthPct: 0.32, heightPct: 0.8 } : zone.rect,
-            polygon:
-              shapeType === 'polygon'
-                ? zone.polygon ?? [
-                    { xPct: 0.08, yPct: 0.2 },
-                    { xPct: 0.5, yPct: 0.04 },
-                    { xPct: 0.92, yPct: 0.2 },
-                    { xPct: 0.84, yPct: 0.88 },
-                    { xPct: 0.16, yPct: 0.88 }
-                  ]
-                : zone.polygon
-          };
-        })
+        ...project,
+        completedTaskIds: [...completedTaskIds],
       };
     });
-  }
 
-  updateZonePolygonPoint(bedId: string, zoneId: string, pointIndex: number, point: Partial<ShapePoint>): void {
-    this.patchObject(bedId, (object) => {
-      if (object.type !== 'bed') {
-        return object;
-      }
-
-      return {
-        ...object,
-        zones: this.resolveZonesForBed(object).map((zone) => {
-          if (zone.id !== zoneId || !Array.isArray(zone.polygon) || !zone.polygon[pointIndex]) {
-            return zone;
-          }
-
-          const nextPolygon = [...zone.polygon];
-          const current = nextPolygon[pointIndex];
-          nextPolygon[pointIndex] = {
-            xPct: this.clampPct(point.xPct ?? current.xPct),
-            yPct: this.clampPct(point.yPct ?? current.yPct)
-          };
-
-          return {
-            ...zone,
-            polygon: nextPolygon
-          };
-        })
-      };
-    });
-  }
-
-  addZonePolygonPoint(bedId: string, zoneId: string): void {
-    this.patchObject(bedId, (object) => {
-      if (object.type !== 'bed') {
-        return object;
-      }
-
-      return {
-        ...object,
-        zones: this.resolveZonesForBed(object).map((zone) => {
-          if (zone.id !== zoneId) {
-            return zone;
-          }
-
-          const polygon = Array.isArray(zone.polygon) ? [...zone.polygon] : [];
-          const fallback = polygon[polygon.length - 1] ?? { xPct: 0.5, yPct: 0.5 };
-          polygon.push({
-            xPct: this.clampPct(fallback.xPct + 0.05),
-            yPct: this.clampPct(fallback.yPct + 0.05)
-          });
-
-          return {
-            ...zone,
-            shapeType: 'polygon',
-            polygon
-          };
-        })
-      };
-    });
-  }
-
-  removeZonePolygonPoint(bedId: string, zoneId: string, pointIndex: number): void {
-    this.patchObject(bedId, (object) => {
-      if (object.type !== 'bed') {
-        return object;
-      }
-
-      return {
-        ...object,
-        zones: this.resolveZonesForBed(object).map((zone) => {
-          if (zone.id !== zoneId || !Array.isArray(zone.polygon) || zone.polygon.length <= 3) {
-            return zone;
-          }
-
-          return {
-            ...zone,
-            polygon: zone.polygon.filter((_, index) => index !== pointIndex)
-          };
-        })
-      };
-    });
-  }
-
-  setZoneColor(bedId: string, zoneId: string, colorHex: string): void {
-    this.patchObject(bedId, (object) => {
-      if (object.type !== 'bed') {
-        return object;
-      }
-
-      return {
-        ...object,
-        zones: this.resolveZonesForBed(object).map((zone) =>
-          zone.id === zoneId ? { ...zone, colorHex } : zone
-        )
-      };
-    });
-  }
-
-  updateZoneRect(bedId: string, zoneId: string, rect: Partial<ZoneRect>): void {
-    this.patchObject(bedId, (object) => {
-      if (object.type !== 'bed') {
-        return object;
-      }
-
-      return {
-        ...object,
-        zones: this.resolveZonesForBed(object).map((zone) => {
-          if (zone.id !== zoneId) {
-            return zone;
-          }
-
-          const nextRect: ZoneRect = {
-            xPct: this.clampPct(rect.xPct ?? zone.rect?.xPct ?? 0.08),
-            yPct: this.clampPct(rect.yPct ?? zone.rect?.yPct ?? 0.1),
-            widthPct: this.clampPct(rect.widthPct ?? zone.rect?.widthPct ?? 0.32),
-            heightPct: this.clampPct(rect.heightPct ?? zone.rect?.heightPct ?? 0.8)
-          };
-
-          return {
-            ...zone,
-            rect: nextRect
-          };
-        })
-      };
-    });
-  }
-
-  getZonesForBed(bedId: string): BedZone[] {
-    const bed = this.beds().find((entry) => entry.id === bedId);
-    if (!bed) {
-      return [];
-    }
-
-    return this.resolveZonesForBed(bed);
-  }
-
-  assignSelectedSeedToBedZone(bedId: string, zoneId: string): void {
-    const selectedSeed = this.seeds().find((seed) => seed.id === this.selectedSeedId());
-    const bed = this.beds().find((entry) => entry.id === bedId);
-    if (!selectedSeed || !bed) {
-      return;
-    }
-
-    const zones = this.resolveZonesForBed(bed);
-    const targetZone = zones.find((zone) => zone.id === zoneId);
-    if (!targetZone) {
-      return;
-    }
-
-    const planting = this.buildPlantingForZone(bed, selectedSeed, zones.length);
-    this.patchObject(bedId, (object) => {
-      if (object.type !== 'bed') {
-        return object;
-      }
-
-      const nextZones = this.resolveZonesForBed(object).map((zone) =>
-        zone.id === zoneId ? { ...zone, planting } : zone
+    const projectId = this.activeProjectId();
+    if (this.backendTasksLoadedForProjectId() === projectId) {
+      this.backendTasks.update((tasks) =>
+        tasks.map((task) => (task.id === taskId ? { ...task, completed } : task)),
       );
-
-      return {
-        ...object,
-        zones: nextZones,
-        planting: undefined
-      };
-    });
-
-    const projectId = this.activeProjectId();
-    this.plannerApi
-      .upsertPlanting(projectId, bedId, {
-        bedId,
-        zoneId,
-        ...planting
-      })
-      .subscribe({
-        next: () => {
-          this.syncProjectTasks(projectId);
-          this.loadProjectTasks(projectId);
-        },
-        error: () => {
-          // Keep the optimistic local zone planting when backend write is unavailable.
-        }
-      });
-  }
-
-  clearBedZonePlanting(bedId: string, zoneId: string): void {
-    const bed = this.beds().find((entry) => entry.id === bedId);
-    if (!bed) {
-      return;
     }
 
-    this.patchObject(bedId, (object) => {
-      if (object.type !== 'bed') {
-        return object;
-      }
-
-      return {
-        ...object,
-        zones: this.resolveZonesForBed(object).map((zone) =>
-          zone.id === zoneId ? { ...zone, planting: undefined } : zone
-        ),
-        planting: undefined
-      };
-    });
-
-    this.clearTaskCompletionForBed(bed.id);
-
-    const projectId = this.activeProjectId();
-    this.plannerApi.deletePlanting(projectId, bedId, zoneId).subscribe({
-      next: () => {
-        this.syncProjectTasks(projectId);
-        this.loadProjectTasks(projectId);
-      },
-      error: () => {
-        // Keep optimistic local clear and let regular save/sync restore server state later.
-      }
+    this.plannerApi.updateTaskStatus(projectId, taskId, completed).subscribe({
+      next: () => this.refreshProjectResources(projectId),
     });
   }
 
@@ -828,14 +440,39 @@ export class PlannerStateService {
 
     this.plannerApi.saveProject(project).subscribe({
       next: (savedProject) => {
-        this.patchProject(() => savedProject);
+        this.upsertProject(savedProject);
         this.persistProjectsToStorage();
-        this.syncProjectTasks(savedProject.id);
-        this.loadProjectTasks(savedProject.id);
+        this.refreshProjectResources(savedProject.id);
       },
       error: () => {
         this.persistProjectsToStorage();
-      }
+      },
+    });
+  }
+
+  loadSavedProjects(): void {
+    this.plannerApi.getProjects().subscribe({
+      next: (projects) => {
+        if (!Array.isArray(projects) || projects.length === 0) {
+          return;
+        }
+
+        this.projects.set(projects);
+        const activeProjectId = projects.some((project) => project.id === this.activeProjectId())
+          ? this.activeProjectId()
+          : projects[0].id;
+        this.activeProjectId.set(activeProjectId);
+        this.selectedObjectId.set(null);
+        this.persistProjectsToStorage();
+        this.refreshProjectResources(activeProjectId);
+      },
+      error: () => {
+        const fallback = this.loadProjects();
+        this.projects.set(fallback);
+        this.activeProjectId.set(fallback[0]?.id ?? 'project-home');
+        this.selectedObjectId.set(null);
+        this.refreshProjectResources(this.activeProjectId());
+      },
     });
   }
 
@@ -847,17 +484,13 @@ export class PlannerStateService {
       season: active.season,
       climateZone: active.climateZone,
       lastFrostDateIso: active.lastFrostDateIso,
-      firstFrostDateIso: active.firstFrostDateIso
+      firstFrostDateIso: active.firstFrostDateIso,
     };
 
     this.plannerApi.createProject(payload).subscribe({
-      next: (createdProject) => {
-        this.projects.set([createdProject, ...this.projects()]);
-        this.activeProjectId.set(createdProject.id);
-        this.selectedObjectId.set(null);
-        this.selectedSeedId.set(null);
-        this.persistProjectsToStorage();
-        this.loadProjectTasks(createdProject.id);
+      next: (project) => {
+        this.upsertProject(project);
+        this.selectProject(project.id);
       },
       error: () => {
         const localProject = this.createStarterProject();
@@ -869,14 +502,9 @@ export class PlannerStateService {
         localProject.firstFrostDateIso = payload.firstFrostDateIso;
         localProject.objects = [];
         localProject.seeds = active.seeds.map((seed) => ({ ...seed }));
-
         this.projects.set([localProject, ...this.projects()]);
-        this.activeProjectId.set(localProject.id);
-        this.selectedObjectId.set(null);
-        this.selectedSeedId.set(null);
-        this.persistProjectsToStorage();
-        this.loadProjectTasks(localProject.id);
-      }
+        this.selectProject(localProject.id);
+      },
     });
   }
 
@@ -887,78 +515,90 @@ export class PlannerStateService {
       id: `project-${crypto.randomUUID().slice(0, 8)}`,
       name: `${source.name} Copy`,
       seeds: structuredClone(source.seeds),
-      objects: structuredClone(source.objects)
+      objects: structuredClone(source.objects),
+      updatedAtIso: new Date().toISOString(),
     };
 
     this.plannerApi.saveProject(duplicate).subscribe({
       next: (savedProject) => {
-        this.projects.set([savedProject, ...this.projects()]);
-        this.activeProjectId.set(savedProject.id);
-        this.selectedObjectId.set(null);
-        this.persistProjectsToStorage();
-        this.loadProjectTasks(savedProject.id);
+        this.upsertProject(savedProject);
+        this.selectProject(savedProject.id);
       },
       error: () => {
         this.projects.set([duplicate, ...this.projects()]);
-        this.activeProjectId.set(duplicate.id);
-        this.selectedObjectId.set(null);
-        this.persistProjectsToStorage();
-        this.loadProjectTasks(duplicate.id);
-      }
+        this.selectProject(duplicate.id);
+      },
     });
   }
 
   deleteActiveProject(): void {
     const active = this.activeProject();
     const allProjects = this.projects();
-
     if (!active || allProjects.length <= 1) {
       return;
     }
 
     this.plannerApi.deleteProject(active.id).subscribe({
       next: () => this.removeProjectFromState(active.id),
-      error: () => this.removeProjectFromState(active.id)
+      error: () => this.removeProjectFromState(active.id),
     });
   }
 
-  loadSavedProjects(): void {
-    this.plannerApi.getProjects().subscribe({
-      next: (loaded) => {
-        if (!Array.isArray(loaded) || loaded.length === 0) {
-          return;
-        }
+  archiveActiveProject(): void {
+    const active = this.activeProject();
+    if (!active || active.archivedAtIso) {
+      return;
+    }
 
-        this.projects.set(loaded);
-        this.activeProjectId.set(loaded[0].id);
-        this.selectedObjectId.set(null);
-        this.persistProjectsToStorage();
-        this.syncProjectTasks(loaded[0].id);
-        this.loadProjectTasks(loaded[0].id);
-      },
-      error: () => {
-        const loaded = this.loadProjects();
-        this.projects.set(loaded);
-        this.activeProjectId.set(loaded[0]?.id ?? 'project-home');
-        this.selectedObjectId.set(null);
-        this.loadProjectTasks(this.activeProjectId());
-      }
-    });
+    this.patchProject((project) => ({
+      ...project,
+      archivedAtIso: new Date().toISOString(),
+    }));
   }
 
-  private loadSeedCatalog(): void {
-    this.plannerApi.getSeeds().subscribe({
-      next: (seeds) => {
-        if (!Array.isArray(seeds) || seeds.length === 0) {
-          return;
-        }
+  unarchiveProject(projectId: string): void {
+    this.projects.update((projects) =>
+      projects.map((project) =>
+        project.id === projectId
+          ? { ...project, archivedAtIso: undefined, updatedAtIso: new Date().toISOString() }
+          : project,
+      ),
+    );
+    this.persistProjectsToStorage();
+  }
 
-        this.seedCatalog.set(seeds);
-        this.clearSelectedSeedIfInvalid();
+  getBedSummary(bedId: string): BedSummary | null {
+    return this.bedSummaries().find((summary) => summary.bedId === bedId) ?? null;
+  }
+
+  getBedSummaryLine(bedId: string): string {
+    const summary = this.getBedSummary(bedId);
+    if (!summary) {
+      return 'Open bed';
+    }
+
+    if (summary.currentPlants.length === 0) {
+      return `Open bed • ${Math.round(summary.openAreaSqInches / 144)} sq ft available`;
+    }
+
+    const plantCount = summary.currentPlants.reduce((sum, plant) => sum + plant.plantCount, 0);
+    return `${summary.currentPlants.length} crops • ${plantCount} plants • ${Math.round(summary.openAreaSqInches / 144)} sq ft open`;
+  }
+
+  refreshProjectResources(projectId = this.activeProjectId()): void {
+    if (!projectId) {
+      return;
+    }
+
+    this.plannerApi.syncProjectTasks(projectId).subscribe({
+      next: () => {
+        this.loadProjectTasks(projectId);
+        this.loadBedSummaries(projectId);
       },
       error: () => {
-        this.clearSelectedSeedIfInvalid();
-      }
+        this.loadProjectTasks(projectId);
+        this.loadBedSummaries(projectId);
+      },
     });
   }
 
@@ -971,173 +611,92 @@ export class PlannerStateService {
       error: () => {
         this.backendTasks.set([]);
         this.backendTasksLoadedForProjectId.set(null);
-      }
+      },
     });
   }
 
-  private syncProjectTasks(projectId: string): void {
-    this.plannerApi.syncProjectTasks(projectId).subscribe({
-      next: () => {
-        // Tasks are loaded separately after sync in callers.
+  private loadBedSummaries(projectId: string): void {
+    this.plannerApi.getBedSummaries(projectId).subscribe({
+      next: (summaries) => {
+        this.backendBedSummaries.set(summaries);
+        this.backendBedSummariesLoadedForProjectId.set(projectId);
       },
       error: () => {
-        // Keep local fallback behavior when backend sync is unavailable.
-      }
+        this.backendBedSummaries.set([]);
+        this.backendBedSummariesLoadedForProjectId.set(null);
+      },
     });
   }
 
-  getBedSummary(bed: BedLayout): string {
-    const zones = this.resolveZonesForBed(bed);
-    const plantedZones = zones.filter((zone) => !!zone.planting);
+  private selectProject(projectId: string): void {
+    this.activeProjectId.set(projectId);
+    this.selectedObjectId.set(null);
+    this.selectedSeedId.set(null);
+    this.persistProjectsToStorage();
+    this.refreshProjectResources(projectId);
+  }
 
-    if (plantedZones.length === 0) {
-      return `Open bed ${formatInches(bed.widthInches)} x ${formatInches(bed.heightInches)}`;
+  private upsertProject(project: GardenProject): void {
+    const existing = this.projects().some((entry) => entry.id === project.id);
+    if (existing) {
+      this.projects.update((projects) =>
+        projects.map((entry) => (entry.id === project.id ? project : entry)),
+      );
+      return;
     }
 
-    const totalPlants = plantedZones.reduce((sum, zone) => sum + (zone.planting?.plantCount ?? 0), 0);
-    const totalYield = plantedZones.reduce((sum, zone) => sum + (zone.planting?.expectedHarvestPounds ?? 0), 0);
-    return `${plantedZones.length}/${zones.length} rows planted • ${totalPlants} plants • ${totalYield.toFixed(1)} lbs`;
+    this.projects.set([project, ...this.projects()]);
   }
 
-  private calculatePlantCount(areaInSquareInches: number, seed: SeedMetadata): number {
-    const recommendedArea = seed.spacingInches * seed.rowSpacingInches;
-    return Math.max(1, Math.floor(areaInSquareInches / recommendedArea));
+  private patchProject(updater: (project: GardenProject) => GardenProject): void {
+    const activeProjectId = this.activeProjectId();
+    this.projects.update((projects) =>
+      projects.map((project) =>
+        project.id === activeProjectId
+          ? updater({ ...project, updatedAtIso: new Date().toISOString() })
+          : project,
+      ),
+    );
+    this.persistProjectsToStorage();
   }
 
-  private calculateZoneDensityScore(bed: BedLayout, zone: BedZone, seed: SeedMetadata): number {
-    if (!zone.planting) {
-      return 0;
-    }
-
-    const zoneArea = this.getZoneAreaInSquareInches(bed, this.resolveZonesForBed(bed), zone);
-    const usedArea = zone.planting.plantCount * seed.spacingInches * seed.rowSpacingInches;
-    return zoneArea <= 0 ? 0 : usedArea / zoneArea;
-  }
-
-  private computeCompanionWarnings(): PlannerWarning[] {
-    const warnings: PlannerWarning[] = [];
-    const plantedBeds = this.beds().filter((bed) => this.resolveZonesForBed(bed).some((zone) => !!zone.planting));
-
-    for (let i = 0; i < plantedBeds.length; i++) {
-      for (let j = i + 1; j < plantedBeds.length; j++) {
-        const a = plantedBeds[i];
-        const b = plantedBeds[j];
-
-        const plantingA = this.resolveZonesForBed(a).find((zone) => !!zone.planting)?.planting;
-        const plantingB = this.resolveZonesForBed(b).find((zone) => !!zone.planting)?.planting;
-        const seedA = this.seeds().find((seed) => seed.id === plantingA?.seedId);
-        const seedB = this.seeds().find((seed) => seed.id === plantingB?.seedId);
-        if (!seedA || !seedB) {
-          continue;
-        }
-
-        const distance = this.getBedCenterDistanceInches(a, b);
-        if (distance > 220) {
-          continue;
-        }
-
-        const conflictPair =
-          seedA.conflictSeedIds?.includes(seedB.id) || seedB.conflictSeedIds?.includes(seedA.id);
-        if (conflictPair) {
-          warnings.push({
-            id: `companion-conflict-${a.id}-${b.id}`,
-            title: `${a.name} and ${b.name}: incompatible pairing`,
-            detail: `${seedA.name} and ${seedB.name} are not recommended close together (${Math.round(distance)}in apart).`,
-            severity: 'warning',
-            bedId: a.id
-          });
-          continue;
-        }
-
-        const companionPair =
-          seedA.companionSeedIds?.includes(seedB.id) || seedB.companionSeedIds?.includes(seedA.id);
-        if (companionPair) {
-          warnings.push({
-            id: `companion-good-${a.id}-${b.id}`,
-            title: `${a.name} and ${b.name}: companion match`,
-            detail: `${seedA.name} and ${seedB.name} are companion plants and can support each other nearby.`,
-            severity: 'info',
-            bedId: a.id
-          });
-        }
-      }
-    }
-
-    return warnings;
-  }
-
-  private resolveZonesForBed(bed: BedLayout): BedZone[] {
-    if (Array.isArray(bed.zones) && bed.zones.length > 0) {
-      return this.reconcileZones(bed.zones, bed.rows);
-    }
-
-    return this.createDefaultZones(bed.rows, bed.planting ? [bed.planting] : []);
-  }
-
-  private createDefaultZones(rows: number, plantings: BedPlanting[] = []): BedZone[] {
-    const zoneColors = ['#7ab77d', '#58a680', '#76b2a3', '#90af73', '#a2c46f', '#66a58d'];
-    return Array.from({ length: rows }, (_, index) => ({
-      id: `zone-${index + 1}`,
-      name: `Row ${index + 1}`,
-      rowIndex: index,
-      shapeType: 'row-strip',
-      colorHex: zoneColors[index % zoneColors.length],
-      planting: plantings[index] ? { ...plantings[index] } : undefined
+  private patchObject(objectId: string, updater: (object: LayoutObject) => LayoutObject): void {
+    this.patchProject((project) => ({
+      ...project,
+      objects: project.objects.map((object) => (object.id === objectId ? updater(object) : object)),
     }));
   }
 
-  private reconcileZones(zones: BedZone[] | undefined, rows: number): BedZone[] {
-    const nextRows = Math.max(1, Math.round(rows));
-    const current = Array.isArray(zones) ? [...zones].sort((a, b) => a.rowIndex - b.rowIndex) : [];
-    const normalized = this.createDefaultZones(nextRows);
+  private loadSeedCatalog(): void {
+    this.plannerApi.getSeeds().subscribe({
+      next: (seeds) => {
+        if (!Array.isArray(seeds) || seeds.length === 0) {
+          return;
+        }
 
-    return normalized.map((fallback, index) => {
-      const existing = current[index];
-      if (!existing) {
-        return fallback;
-      }
-
-      return {
-        ...existing,
-        rowIndex: index,
-        name: existing.name?.trim() || fallback.name,
-        shapeType: existing.shapeType ?? fallback.shapeType,
-        colorHex: existing.colorHex ?? fallback.colorHex
-      };
+        this.seedCatalog.set(seeds);
+      },
     });
   }
 
-  private clampPct(value: number): number {
-    return Math.min(1, Math.max(0, Number(value.toFixed(3))));
+  private buildFallbackTasks(): PlannerTask[] {
+    return this.bedSummaries()
+      .flatMap((summary) => summary.nextTasks)
+      .sort((a, b) => a.dueDateIso.localeCompare(b.dueDateIso));
   }
 
-  private getZoneAreaInSquareInches(bed: BedLayout, zones: BedZone[], zone: BedZone): number {
-    const totalRows = Math.max(1, zones.length || bed.rows || 1);
-    return (bed.widthInches * bed.heightInches) / totalRows;
-  }
-
-  private buildPlantingForZone(bed: BedLayout, seed: SeedMetadata, zoneCount: number): BedPlanting {
-    const zoneArea = (bed.widthInches * bed.heightInches) / Math.max(1, zoneCount);
-    const plantCount = this.calculatePlantCount(zoneArea, seed);
-    const now = new Date();
-    const harvestDate = new Date(now);
-    harvestDate.setDate(harvestDate.getDate() + seed.daysToMaturity);
-
-    return {
-      seedId: seed.id,
-      plantedOnIso: now.toISOString(),
-      plantCount,
-      expectedHarvestPounds: Number((plantCount * seed.yield.averagePoundsPerPlant).toFixed(1)),
-      expectedHarvestDateIso: harvestDate.toISOString()
-    };
-  }
-
-  private getBedCenterDistanceInches(a: BedLayout, b: BedLayout): number {
-    const aX = a.xInches + a.widthInches / 2;
-    const aY = a.yInches + a.heightInches / 2;
-    const bX = b.xInches + b.widthInches / 2;
-    const bY = b.yInches + b.heightInches / 2;
-    return Math.hypot(aX - bX, aY - bY);
+  private buildFallbackBedSummaries(): BedSummary[] {
+    return this.beds().map((bed) => ({
+      bedId: bed.id,
+      bedName: bed.name,
+      currentPlants: [],
+      nextTasks: [],
+      placementsCount: 0,
+      occupiedAreaSqInches: 0,
+      openAreaSqInches: bed.widthInches * bed.heightInches,
+      totalAreaSqInches: bed.widthInches * bed.heightInches,
+      warnings: [],
+    }));
   }
 
   private removeProjectFromState(projectId: string): void {
@@ -1146,44 +705,12 @@ export class PlannerStateService {
       return;
     }
 
-    const nextActive = remaining[0];
     this.projects.set(remaining);
-    this.activeProjectId.set(nextActive.id);
+    this.activeProjectId.set(remaining[0].id);
     this.selectedObjectId.set(null);
     this.selectedSeedId.set(null);
     this.persistProjectsToStorage();
-  }
-
-  private ensureActiveProjectVisible(): void {
-    const active = this.activeProject();
-    if (!active?.archivedAtIso) {
-      return;
-    }
-
-    const fallback = this.projects().find((project) => !project.archivedAtIso);
-    if (!fallback) {
-      return;
-    }
-
-    this.activeProjectId.set(fallback.id);
-    this.selectedObjectId.set(null);
-  }
-
-  private patchProject(updater: (project: GardenProject) => GardenProject): void {
-    const currentId = this.activeProjectId();
-    const updated = this.projects().map((project) =>
-      project.id === currentId ? updater({ ...project, updatedAtIso: new Date().toISOString() }) : project
-    );
-
-    this.projects.set(updated);
-    this.persistProjectsToStorage();
-  }
-
-  private patchObject(objectId: string, updater: (object: LayoutObject) => LayoutObject): void {
-    this.patchProject((project) => ({
-      ...project,
-      objects: project.objects.map((item) => (item.id === objectId ? updater(item) : item))
-    }));
+    this.refreshProjectResources(remaining[0].id);
   }
 
   private loadProjects(): GardenProject[] {
@@ -1208,30 +735,6 @@ export class PlannerStateService {
     this.storage?.setItem(STORAGE_KEY, JSON.stringify(this.projects()));
   }
 
-  private clearSelectedSeedIfInvalid(): void {
-    const selectedSeedId = this.selectedSeedId();
-    if (!selectedSeedId) {
-      return;
-    }
-
-    const exists = this.seeds().some((seed) => seed.id === selectedSeedId);
-    if (!exists) {
-      this.selectedSeedId.set(null);
-    }
-  }
-
-  private clearTaskCompletionForBed(bedId: string): void {
-    this.patchProject((project) => ({
-      ...project,
-      completedTaskIds: (project.completedTaskIds ?? []).filter(
-        (taskId) =>
-          !taskId.startsWith(`task-plan-${bedId}`) &&
-          !taskId.startsWith(`task-harvest-${bedId}`) &&
-          !taskId.startsWith(`task-succession-${bedId}`)
-      )
-    }));
-  }
-
   private createStarterProject(): GardenProject {
     const now = new Date().toISOString();
 
@@ -1244,63 +747,7 @@ export class PlannerStateService {
       firstFrostDateIso: '2026-10-15T00:00:00.000Z',
       completedTaskIds: [],
       updatedAtIso: now,
-      seeds: [
-        {
-          id: 'seed-tomato-sungold',
-          name: 'Tomato',
-          variety: 'Sungold',
-          lifecycle: 'annual',
-          family: 'Solanaceae',
-          spacingInches: 24,
-          rowSpacingInches: 36,
-          daysToMaturity: 65,
-          matureSpreadInches: 30,
-          preferredSun: 'full-sun',
-          soilPhMin: 6,
-          soilPhMax: 6.8,
-          successionFriendly: false,
-          yield: { averagePoundsPerPlant: 10 },
-          companionSeedIds: ['seed-lettuce-romaine'],
-          notes: 'Indeterminate cherry tomato.'
-        },
-        {
-          id: 'seed-lettuce-romaine',
-          name: 'Lettuce',
-          variety: 'Romaine',
-          lifecycle: 'annual',
-          family: 'Asteraceae',
-          spacingInches: 8,
-          rowSpacingInches: 12,
-          daysToMaturity: 55,
-          matureSpreadInches: 10,
-          preferredSun: 'part-sun',
-          soilPhMin: 6,
-          soilPhMax: 7,
-          successionFriendly: true,
-          yield: { averagePoundsPerPlant: 0.5 },
-          companionSeedIds: ['seed-tomato-sungold'],
-          conflictSeedIds: ['seed-blueberry-patriot'],
-          notes: 'Great for succession sowing every 2-3 weeks.'
-        },
-        {
-          id: 'seed-blueberry-patriot',
-          name: 'Blueberry',
-          variety: 'Patriot',
-          lifecycle: 'perennial',
-          family: 'Ericaceae',
-          spacingInches: 48,
-          rowSpacingInches: 72,
-          daysToMaturity: 365,
-          matureSpreadInches: 60,
-          preferredSun: 'full-sun',
-          soilPhMin: 4.5,
-          soilPhMax: 5.5,
-          successionFriendly: false,
-          yield: { averagePoundsPerPlant: 6 },
-          conflictSeedIds: ['seed-lettuce-romaine'],
-          notes: 'Perennial shrub, acidic soil required.'
-        }
-      ],
+      seeds: [],
       objects: [
         {
           id: 'bed-a',
@@ -1316,9 +763,9 @@ export class PlannerStateService {
           soil: {
             ph: 6.4,
             drainage: 'good',
-            organicMatterPercent: 5
+            organicMatterPercent: 5,
           },
-          lastSeasonFamily: 'Brassicaceae'
+          lastSeasonFamily: 'Brassicaceae',
         },
         {
           id: 'bed-b',
@@ -1334,8 +781,8 @@ export class PlannerStateService {
           soil: {
             ph: 6.8,
             drainage: 'moderate',
-            organicMatterPercent: 4
-          }
+            organicMatterPercent: 4,
+          },
         },
         {
           id: 'tree-pear',
@@ -1346,7 +793,7 @@ export class PlannerStateService {
           widthInches: 72,
           heightInches: 72,
           rotationDeg: 0,
-          canopyDiameterInches: 120
+          canopyDiameterInches: 120,
         },
         {
           id: 'structure-shed',
@@ -1356,9 +803,9 @@ export class PlannerStateService {
           yInches: 220,
           widthInches: 84,
           heightInches: 60,
-          rotationDeg: 0
-        }
-      ]
+          rotationDeg: 0,
+        },
+      ],
     };
   }
 
@@ -1374,7 +821,11 @@ export class PlannerStateService {
 
     return {
       getItem: candidate.getItem.bind(candidate),
-      setItem: candidate.setItem.bind(candidate)
+      setItem: candidate.setItem.bind(candidate),
     };
+  }
+
+  private clampPct(value: number): number {
+    return Math.min(1, Math.max(0, Number(value.toFixed(3))));
   }
 }
