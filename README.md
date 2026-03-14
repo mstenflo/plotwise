@@ -56,9 +56,13 @@ If you are using the personal RDS instance through an SSM tunnel, keep your RDS 
 DB_HOST=127.0.0.1
 DB_PORT=5432
 DB_SSL=true
+RDS_BASTION_INSTANCE_ID=<your-bastion-instance-id>
+AWS_REGION=<your-aws-region>
 ```
 
 `DB_HOST` and `DB_PORT` override the host and port inside `DATABASE_URL`, so you do not need to rewrite the full connection string just to use the tunnel.
+
+`npm run dev:rds` reads its AWS tunnel settings from `backend/.env`, which is ignored by git, so your personal instance IDs and endpoints do not need to appear in the repository.
 
 ### 4. Choose a database path
 
@@ -81,18 +85,22 @@ This command:
 - Runs frontend and backend dev servers
 - Closes the tunnel when you stop the app
 
-It uses these defaults:
+It reads these values from `backend/.env`:
 
-- `AWS_REGION=us-east-2`
-- `RDS_BASTION_INSTANCE_ID=i-0431b05da5c97b8cc`
-- `RDS_HOST=plotwise-sql.crauuk6ck45m.us-east-2.rds.amazonaws.com`
-- `RDS_PORT=5432`
-- `LOCAL_DB_PORT=5432`
+- `DATABASE_URL` for the remote database endpoint and credentials
+- `DB_PORT` for the local forwarded port the backend connects to
+- `RDS_BASTION_INSTANCE_ID` for the SSM target instance
+- `AWS_REGION` for the AWS CLI region, if it cannot be inferred from the RDS endpoint
 
-Override them for a different bastion or database, for example:
+For a new setup, add your own values to `backend/.env` like this:
 
-```bash
-AWS_REGION=us-east-1 RDS_BASTION_INSTANCE_ID=i-abc123 npm run dev:rds
+```dotenv
+DATABASE_URL=postgresql://<db-user>:<db-password>@<your-rds-endpoint>:5432/<db-name>
+DB_HOST=127.0.0.1
+DB_PORT=5432
+DB_SSL=true
+RDS_BASTION_INSTANCE_ID=<your-bastion-instance-id>
+AWS_REGION=<your-aws-region>
 ```
 
 ### 5. Run the full app with local Docker PostgreSQL
